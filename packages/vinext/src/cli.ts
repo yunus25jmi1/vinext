@@ -23,6 +23,7 @@ import { deploy as runDeploy, parseDeployArgs } from "./deploy.js";
 import { runCheck, formatReport } from "./check.js";
 import { init as runInit } from "./init.js";
 import { loadDotenv } from "./config/dotenv.js";
+import { ensureESModule, renameCJSConfigs, hasViteConfig as hasViteConfigInRoot } from "./utils/project.js";
 
 // ─── Resolve Vite from the project root ────────────────────────────────────────
 //
@@ -177,6 +178,61 @@ function buildViteConfig(overrides: Record<string, unknown> = {}) {
   return config;
 }
 
+/**
+ * Ensure the project's package.json has `"type": "module"` before Vite loads
+ * the vite.config.ts. This prevents the esbuild CJS-bundling path that Vite
+ * takes for projects without `"type": "module"`, which produces a `.mjs` temp
+ * file containing `require()` calls — calls that fail on Node 22 when
+ * targeting pure-ESM packages like `@cloudflare/vite-plugin`.
+ *
+ * This mirrors what `vinext init` does, but is applied lazily at dev/build
+ * time for projects that were set up before `vinext init` added the step, or
+ * that were migrated manually.
+ *
+ * Side effects: may rename `.js` config files like `postcss.config.js` to
+ * `.cjs` to avoid CJS/ESM confusion after `"type": "module"` is added (the
+ * same rename logic used by `vinext init`).
+ */
+function ensureViteConfigCompatibility(root: string): void {
+  // Only act when there is a vite.config — auto-config mode sets
+  // configFile: false and doesn't go through Vite's file-loading path.
+  if (!hasViteConfigInRoot(root)) return;
+
+  const pkgPath = path.join(root, "package.json");
+  if (!fs.existsSync(pkgPath)) return;
+
+  let pkg: Record<string, unknown>;
+  try {
+    pkg = JSON.parse(fs.readFileSync(pkgPath, "utf-8"));
+  } catch {
+    return;
+  }
+
+  // Already correct — nothing to do.
+  if (pkg.type === "module") return;
+
+  // Respect explicit "type": "commonjs" — the user chose this deliberately.
+  if (pkg.type !== undefined) return;
+
+  // Rename any `.js` CJS config files first so they don't break after we
+  // add "type": "module".
+  const renamed = renameCJSConfigs(root);
+  for (const [oldName, newName] of renamed) {
+    console.warn(
+      `  [vinext] Renamed ${oldName} → ${newName} (required for "type": "module")`
+    );
+  }
+
+  // Add "type": "module" so Vite loads vite.config.ts as ESM.
+  const added = ensureESModule(root);
+  if (added) {
+    console.warn(
+      `  [vinext] Added "type": "module" to package.json (required for Vite ESM config loading).\n` +
+        `  Run \`vinext init\` to review all project configuration.`
+    );
+  }
+}
+
 // ─── Commands ─────────────────────────────────────────────────────────────────
 
 async function dev() {
@@ -187,6 +243,11 @@ async function dev() {
     root: process.cwd(),
     mode: "development",
   });
+
+  // Ensure "type": "module" in package.json before Vite loads vite.config.ts.
+  // Without this, Vite bundles the config as CJS and tries require() on pure-ESM
+  // packages like @cloudflare/vite-plugin, which fails on Node 22.
+  ensureViteConfigCompatibility(process.cwd());
 
   const vite = await loadVite();
 
@@ -212,6 +273,11 @@ async function buildApp() {
     root: process.cwd(),
     mode: "production",
   });
+
+  // Ensure "type": "module" in package.json before Vite loads vite.config.ts.
+  // Without this, Vite bundles the config as CJS and tries require() on pure-ESM
+  // packages like @cloudflare/vite-plugin, which fails on Node 22.
+  ensureViteConfigCompatibility(process.cwd());
 
   const vite = await loadVite();
 

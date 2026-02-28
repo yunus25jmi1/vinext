@@ -1790,3 +1790,118 @@ describe("Cloudflare closeBundle lazy chunk injection", () => {
     expect(lazy).not.toContain("assets/framework.js");
   });
 });
+
+// ─── ESM config compatibility (issue #184) ──────────────────────────────────
+//
+// Regression tests for ensureViteConfigCompatibility() — the wrapper in cli.ts
+// that calls ensureESModule + renameCJSConfigs before Vite loads the config.
+//
+// Scenario from issue #184:
+//   Project has vite.config.ts importing @cloudflare/vite-plugin.
+//   package.json lacks "type":"module".
+//   Vite bundles the config with esbuild → outputs CJS require() for the plugin.
+//   Node 22 throws:  Error: Dynamic require of "…index.mjs" is not supported
+//
+// The underlying ensureESModule() and renameCJSConfigs() are already tested
+// above. These tests cover the unique scenarios from the issue and the
+// integration of both functions together.
+
+describe("ESM config compatibility — issue #184", () => {
+  it("full fix scenario: renames CJS postcss config + adds type:module", () => {
+    // Yarn 1 monorepo scenario: no "type":"module", CJS postcss config
+    writeFile(
+      tmpDir,
+      "package.json",
+      JSON.stringify({ name: "web", version: "1.0.0" }),
+    );
+    writeFile(
+      tmpDir,
+      "vite.config.ts",
+      'import { cloudflare } from "@cloudflare/vite-plugin";\nexport default { plugins: [cloudflare()] };',
+    );
+    writeFile(
+      tmpDir,
+      "postcss.config.js",
+      "module.exports = { plugins: { tailwindcss: {}, autoprefixer: {} } };",
+    );
+
+    // Simulate what ensureViteConfigCompatibility does
+    const renamed = renameCJSConfigs(tmpDir);
+    const added = ensureESModule(tmpDir);
+
+    expect(added).toBe(true);
+    const pkg = JSON.parse(fs.readFileSync(path.join(tmpDir, "package.json"), "utf-8"));
+    expect(pkg.type).toBe("module");
+
+    expect(renamed).toEqual([["postcss.config.js", "postcss.config.cjs"]]);
+    expect(fs.existsSync(path.join(tmpDir, "postcss.config.cjs"))).toBe(true);
+    expect(fs.existsSync(path.join(tmpDir, "postcss.config.js"))).toBe(false);
+  });
+
+  it("handles a workspaces monorepo: only updates the leaf package.json", () => {
+    const webDir = path.join(tmpDir, "apps", "web");
+    fs.mkdirSync(webDir, { recursive: true });
+
+    // Root package.json (CJS)
+    writeFile(tmpDir, "package.json", JSON.stringify({ name: "monorepo", workspaces: ["apps/*"] }));
+    // Workspace package.json (no type:module)
+    writeFile(webDir, "package.json", JSON.stringify({ name: "web", version: "1.0.0" }));
+    writeFile(webDir, "vite.config.ts", "export default {};");
+
+    ensureESModule(webDir);
+
+    const rootPkg = JSON.parse(fs.readFileSync(path.join(tmpDir, "package.json"), "utf-8"));
+    const webPkg = JSON.parse(fs.readFileSync(path.join(webDir, "package.json"), "utf-8"));
+
+    // Only the workspace package should be modified
+    expect(webPkg.type).toBe("module");
+    expect(rootPkg.type).toBeUndefined();
+  });
+
+  it("preserves all existing package.json fields when adding type:module", () => {
+    writeFile(
+      tmpDir,
+      "package.json",
+      JSON.stringify({
+        name: "web",
+        version: "0.1.0",
+        private: true,
+        scripts: { dev: "vinext dev", build: "vinext build" },
+        dependencies: { react: "^19.0.0", "react-dom": "^19.0.0" },
+        devDependencies: { vinext: "^0.0.13", "@cloudflare/vite-plugin": "^1.0.0" },
+      }),
+    );
+
+    ensureESModule(tmpDir);
+
+    const pkg = JSON.parse(fs.readFileSync(path.join(tmpDir, "package.json"), "utf-8"));
+    expect(pkg.type).toBe("module");
+    expect(pkg.name).toBe("web");
+    expect(pkg.version).toBe("0.1.0");
+    expect(pkg.private).toBe(true);
+    expect(pkg.scripts.build).toBe("vinext build");
+    expect(pkg.dependencies.react).toBe("^19.0.0");
+    expect(pkg.devDependencies.vinext).toBe("^0.0.13");
+  });
+
+  it("handles multiple CJS config files simultaneously", () => {
+    writeFile(
+      tmpDir,
+      "package.json",
+      JSON.stringify({ name: "my-app", version: "1.0.0" }),
+    );
+    writeFile(tmpDir, "postcss.config.js", "module.exports = {};");
+    writeFile(tmpDir, "tailwind.config.js", "module.exports = {};");
+    writeFile(tmpDir, ".eslintrc.js", "module.exports = {};");
+
+    const renamed = renameCJSConfigs(tmpDir);
+    ensureESModule(tmpDir);
+
+    expect(renamed).toHaveLength(3);
+    expect(fs.existsSync(path.join(tmpDir, "postcss.config.cjs"))).toBe(true);
+    expect(fs.existsSync(path.join(tmpDir, "tailwind.config.cjs"))).toBe(true);
+    expect(fs.existsSync(path.join(tmpDir, ".eslintrc.cjs"))).toBe(true);
+    const pkg = JSON.parse(fs.readFileSync(path.join(tmpDir, "package.json"), "utf-8"));
+    expect(pkg.type).toBe("module");
+  });
+});
