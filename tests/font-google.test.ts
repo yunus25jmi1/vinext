@@ -150,11 +150,21 @@ describe("next/font/google shim", () => {
     const names = [
       "Inter", "Roboto", "Roboto_Mono", "Open_Sans", "Lato",
       "Poppins", "Montserrat", "Geist", "Geist_Mono",
-      "JetBrains_Mono", "Fira_Code",
+      "JetBrains_Mono", "Fira_Code", "Space_Grotesk",
     ];
     for (const name of names) {
       expect(typeof (mod as any)[name]).toBe("function");
     }
+  });
+
+  it("Space_Grotesk named export works correctly (issue #190)", async () => {
+    const { Space_Grotesk } = await import("../packages/vinext/src/shims/font-google.js");
+    expect(typeof Space_Grotesk).toBe("function");
+    
+    const result = Space_Grotesk({ subsets: ["latin"], weight: ["400"] });
+    expect(result.className).toMatch(/^__font_space_grotesk_\d+$/);
+    expect(result.style.fontFamily).toContain("Space Grotesk");
+    expect(result.variable).toMatch(/^__variable_space_grotesk_\d+$/);
   });
 
   // ── Security: CSS injection via font family names ──

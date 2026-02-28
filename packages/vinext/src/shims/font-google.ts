@@ -446,3 +446,4 @@ export const Fira_Code = createFontLoader("Fira Code");
 export const JetBrains_Mono = createFontLoader("JetBrains Mono");
 export const Geist = createFontLoader("Geist");
 export const Geist_Mono = createFontLoader("Geist Mono");
+export const Space_Grotesk = createFontLoader("Space Grotesk");
