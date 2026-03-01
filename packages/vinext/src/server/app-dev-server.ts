@@ -7,6 +7,7 @@
  * the SSR entry for HTML generation.
  */
 import fs from "node:fs";
+import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { AppRoute } from "../routing/app-router.js";
 import type { MetadataFileRoute } from "./metadata-routes.js";
@@ -14,6 +15,7 @@ import type { NextRedirect, NextRewrite, NextHeader } from "../config/next-confi
 import { generateDevOriginCheckCode } from "./dev-origin-check.js";
 import { generateSafeRegExpCode, generateMiddlewareMatcherCode, generateNormalizePathCode } from "./middleware-codegen.js";
 import { isProxyFile } from "./middleware.js";
+import { MIME_TYPES } from "./mime.js";
 
 /**
  * Resolved config options relevant to App Router request handling.
@@ -49,6 +51,7 @@ export function generateRscEntry(
   basePath?: string,
   trailingSlash?: boolean,
   config?: AppRouterConfig,
+  root?: string,
 ): string {
   const bp = basePath ?? "";
   const ts = trailingSlash ?? false;
@@ -56,6 +59,11 @@ export function generateRscEntry(
   const rewrites = config?.rewrites ?? { beforeFiles: [], afterFiles: [], fallback: [] };
   const headers = config?.headers ?? [];
   const allowedOrigins = config?.allowedOrigins ?? [];
+  // Compute the public/ directory path for serving static files after rewrites.
+  // appDir is something like /project/app or /project/src/app; root is the Vite root.
+  // We require `root` for correctness — path.dirname(appDir) is wrong for src/app layouts
+  // (e.g. /project/src/public instead of /project/public).
+  const publicDir = path.join(root ?? path.resolve(appDir, ".."), "public").replace(/\\/g, "/");
   // Build import map for all page and layout files
   const imports: string[] = [];
   const importMap: Map<string, string> = new Map();
@@ -205,6 +213,8 @@ ${slotEntries.join(",\n")}
   });
 
   return `
+import __nodeFs from "node:fs";
+import __nodePath from "node:path";
 import {
   renderToReadableStream,
   decodeReply,
@@ -1691,6 +1701,27 @@ async function _handleRequest(request, __reqCtx) {
   }
 
   if (!match) {
+    // If the path has a file extension (e.g. /auth/no-access.html after a rewrite),
+    // check whether it corresponds to a static file in public/ before returning 404.
+    const __extname = __nodePath.extname(cleanPathname);
+    if (__extname) {
+      const __publicRoot = ${JSON.stringify(publicDir)};
+      const __publicFilePath = __nodePath.resolve(__publicRoot, "." + cleanPathname);
+      // Path traversal guard — resolved path must stay inside public/
+      if (__publicFilePath.startsWith(__publicRoot + "/")) {
+        try {
+          const __stat = __nodeFs.statSync(__publicFilePath);
+          if (__stat.isFile()) {
+            const __content = __nodeFs.readFileSync(__publicFilePath);
+            const __ext = __extname.slice(1).toLowerCase();
+            const __mimeTypes = ${JSON.stringify(MIME_TYPES)};
+            setHeadersContext(null);
+            setNavigationContext(null);
+            return new Response(__content, { status: 200, headers: { "Content-Type": __mimeTypes[__ext] ?? "application/octet-stream" } });
+          }
+        } catch { /* file doesn't exist or not readable */ }
+      }
+    }
     // Render custom not-found page if available, otherwise plain 404
     const notFoundResponse = await renderNotFoundPage(null, isRscRequest, request);
     if (notFoundResponse) return notFoundResponse;

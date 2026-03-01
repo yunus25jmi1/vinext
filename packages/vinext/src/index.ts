@@ -36,6 +36,7 @@ import {
 import { scanMetadataFiles } from "./server/metadata-routes.js";
 import { staticExportPages } from "./build/static-export.js";
 import { detectPackageManager } from "./utils/project.js";
+import { mimeType } from "./server/mime.js";
 import tsconfigPaths from "vite-tsconfig-paths";
 import MagicString from "magic-string";
 import path from "node:path";
@@ -2241,7 +2242,7 @@ hydrate();
             headers: nextConfig?.headers,
             allowedOrigins: nextConfig?.serverActionsAllowedOrigins,
             allowedDevOrigins: nextConfig?.serverActionsAllowedOrigins,
-          });
+          }, root);
         }
         if (id === RESOLVED_APP_SSR_ENTRY && hasAppDir) {
           return generateSsrEntry();
@@ -2727,6 +2728,24 @@ hydrate();
                     return;
                   }
                   await handler(req, res, fallbackRewrite, mwStatus);
+                  return;
+                }
+              }
+
+              // No fallback matched — render as-is (will hit 404 handler)
+              // But first, if the resolved URL has a file extension, check whether it
+              // corresponds to a static file in the public/ directory (e.g., after a
+              // rewrite: /auth/no-access → /auth/no-access.html). Serve it directly so
+              // we don't hit the SSR 404 path.
+              const resolvedStaticPath = resolvedUrl.split("?")[0];
+              if (path.extname(resolvedStaticPath)) {
+                const resolvedPublicDir = path.resolve(root, "public");
+                const publicFilePath = path.resolve(root, "public", "." + resolvedStaticPath);
+                if (publicFilePath.startsWith(resolvedPublicDir + path.sep) && fs.existsSync(publicFilePath) && fs.statSync(publicFilePath).isFile()) {
+                  const content = fs.readFileSync(publicFilePath);
+                  const ext = (path.extname(resolvedStaticPath).slice(1)).toLowerCase();
+                  res.writeHead(200, { "Content-Type": mimeType(ext) });
+                  res.end(content);
                   return;
                 }
               }

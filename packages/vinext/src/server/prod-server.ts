@@ -28,6 +28,7 @@ import type { RequestContext } from "../config/config-matchers.js";
 import { IMAGE_OPTIMIZATION_PATH, IMAGE_CONTENT_SECURITY_POLICY, parseImageParams, isSafeImageContentType, DEFAULT_DEVICE_SIZES, DEFAULT_IMAGE_SIZES, type ImageConfig } from "./image-optimization.js";
 import { normalizePath } from "./normalize-path.js";
 import { computeLazyChunks } from "../index.js";
+import { mimeType } from "./mime.js";
 
 /** Convert a Node.js IncomingMessage into a ReadableStream for Web Request body. */
 function readNodeStream(req: IncomingMessage): ReadableStream<Uint8Array> {
@@ -152,27 +153,11 @@ function sendCompressed(
   }
 }
 
-/** Content-type lookup for static assets. */
-const CONTENT_TYPES: Record<string, string> = {
-  ".js": "application/javascript",
-  ".mjs": "application/javascript",
-  ".css": "text/css",
-  ".html": "text/html",
-  ".json": "application/json",
-  ".png": "image/png",
-  ".jpg": "image/jpeg",
-  ".jpeg": "image/jpeg",
-  ".gif": "image/gif",
-  ".svg": "image/svg+xml",
-  ".ico": "image/x-icon",
-  ".woff": "font/woff",
-  ".woff2": "font/woff2",
-  ".ttf": "font/ttf",
-  ".eot": "application/vnd.ms-fontobject",
-  ".webp": "image/webp",
-  ".avif": "image/avif",
-  ".map": "application/json",
-};
+/** Content-type lookup for static assets using the shared MIME map. */
+function contentType(ext: string): string {
+  // ext comes from path.extname() so it has a leading dot (e.g. ".js")
+  return mimeType(ext.startsWith(".") ? ext.slice(1) : ext);
+}
 
 /**
  * Try to serve a static file from the client build directory.
@@ -207,7 +192,7 @@ function tryServeStatic(
   }
 
   const ext = path.extname(staticFile);
-  const ct = CONTENT_TYPES[ext] ?? "application/octet-stream";
+  const ct = contentType(ext);
   const isHashed = pathname.startsWith("/assets/");
   const cacheControl = isHashed
     ? "public, max-age=31536000, immutable"
@@ -526,7 +511,7 @@ async function startAppRouterServer(options: AppRouterServerOptions) {
       // Block SVG and other unsafe content types by checking the file extension.
       // SVG is only allowed when dangerouslyAllowSVG is enabled in next.config.js.
       const ext = path.extname(params.imageUrl).toLowerCase();
-      const ct = CONTENT_TYPES[ext] ?? "application/octet-stream";
+      const ct = contentType(ext);
       if (!isSafeImageContentType(ct, imageConfig?.dangerouslyAllowSVG)) {
         res.writeHead(400);
         res.end("The requested resource is not an allowed image type");
@@ -693,7 +678,7 @@ async function startPagesRouterServer(options: PagesRouterServerOptions) {
       // Block SVG and other unsafe content types.
       // SVG is only allowed when dangerouslyAllowSVG is enabled.
       const ext = path.extname(params.imageUrl).toLowerCase();
-      const ct = CONTENT_TYPES[ext] ?? "application/octet-stream";
+      const ct = contentType(ext);
       if (!isSafeImageContentType(ct, pagesImageConfig?.dangerouslyAllowSVG)) {
         res.writeHead(400);
         res.end("The requested resource is not an allowed image type");
@@ -910,6 +895,12 @@ async function startPagesRouterServer(options: PagesRouterServerOptions) {
           }
           resolvedUrl = rewritten;
           resolvedPathname = rewritten.split("?")[0];
+          // If the rewritten path has a file extension, it may point to a static
+          // file in public/ (copied to clientDir during build). Try to serve it
+          // directly before falling through to SSR (which would return 404).
+          if (resolvedPathname.includes(".") && tryServeStatic(req, res, clientDir, resolvedPathname, compress)) {
+            return;
+          }
         }
       }
 
@@ -925,6 +916,11 @@ async function startPagesRouterServer(options: PagesRouterServerOptions) {
             if (isExternalUrl(fallbackRewrite)) {
               const proxyResponse = await proxyExternalRequest(webRequest, fallbackRewrite);
               await sendWebResponse(proxyResponse, req, res, compress);
+              return;
+            }
+            // Check if fallback targets a static file in public/
+            const fallbackPathname = fallbackRewrite.split("?")[0];
+            if (fallbackPathname.includes(".") && tryServeStatic(req, res, clientDir, fallbackPathname, compress)) {
               return;
             }
             response = await renderPage(webRequest, fallbackRewrite, ssrManifest);
