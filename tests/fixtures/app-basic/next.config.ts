@@ -87,6 +87,10 @@ const nextConfig: NextConfig = {
         { source: "/after-rewrite-about", destination: "/about" },
         // Used by E2E: config-redirect.spec.ts
         { source: "/config-rewrite", destination: "/" },
+        // Used by Vitest: app-router.test.ts (rewrite to static HTML in public/)
+        { source: "/static-html-page", destination: "/static-html-page.html" },
+        // Used by Vitest: app-router.test.ts (nested rewrite to static HTML in public/)
+        { source: "/auth/no-access", destination: "/auth/no-access.html" },
       ],
       fallback: [
         // Used by Vitest: app-router.test.ts — fallback rewrite gated on a

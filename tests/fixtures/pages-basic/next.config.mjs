@@ -43,6 +43,16 @@ const nextConfig = {
           has: [{ type: "cookie", key: "mw-user" }],
           destination: "/about",
         },
+        // Used by Vitest: pages-router.test.ts (rewrite to static HTML in public/)
+        {
+          source: "/static-html-page",
+          destination: "/static-html-page.html",
+        },
+        // Used by Vitest: pages-router.test.ts (nested rewrite to static HTML in public/)
+        {
+          source: "/auth/no-access",
+          destination: "/auth/no-access.html",
+        },
       ],
       fallback: [
         {

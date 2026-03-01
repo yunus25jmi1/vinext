@@ -1997,6 +1997,27 @@ describe("App Router next.config.js features (dev server integration)", () => {
     expect(html).toContain("About");
   });
 
+  it("serves static HTML file from public/ when afterFiles rewrite points to .html path", async () => {
+    // Regresses issue #199: async rewrites() returning flat array (→ afterFiles) that maps
+    // a clean URL to a .html file in public/ should serve the file, not return 404.
+    const res = await fetch(`${baseUrl}/static-html-page`);
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toContain("Hello from static HTML");
+    // Should be served with text/html content-type
+    expect(res.headers.get("content-type")).toMatch(/text\/html/i);
+  });
+
+  it("serves nested static HTML file from public/ subdirectory via rewrite", async () => {
+    // Nested rewrites: /auth/no-access → /auth/no-access.html should resolve
+    // to public/auth/no-access.html and serve it.
+    const res = await fetch(`${baseUrl}/auth/no-access`);
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toContain("Access denied from nested static HTML");
+    expect(res.headers.get("content-type")).toMatch(/text\/html/i);
+  });
+
   it("applies custom headers from next.config.js on API routes", async () => {
     const res = await fetch(`${baseUrl}/api/hello`);
     expect(res.headers.get("x-custom-header")).toBe("vinext-app");
@@ -2126,6 +2147,22 @@ describe("App Router next.config.js features (generateRscEntry)", () => {
     expect(code).toContain("/before-rewrite");
     expect(code).toContain("/after-rewrite");
     expect(code).toContain("/fallback-rewrite");
+  });
+
+  it("embeds root/public path for serving static files after rewrite", () => {
+    // When root is provided, the generated code should contain that public path
+    // so it can serve .html files from public/ when a rewrite produces a .html path.
+    const code = generateRscEntry("/tmp/test/app", minimalRoutes, null, [], null, "", false, {}, null, "/tmp/test");
+    // path.join uses OS separators; the generated code embeds via JSON.stringify
+    const expectedPublicDir = path.join("/tmp/test", "public");
+    expect(code).toContain(JSON.stringify(expectedPublicDir));
+    // Should contain the node:fs and node:path imports for the static file handler
+    expect(code).toContain("__nodeFs");
+    expect(code).toContain("__nodePath");
+    expect(code).toContain("statSync");
+    // Should use path.resolve + startsWith for traversal protection
+    expect(code).toContain("__nodePath.resolve");
+    expect(code).toContain("startsWith");
   });
 
   it("generates custom header handling code when headers are provided", () => {

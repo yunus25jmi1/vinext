@@ -7,6 +7,7 @@
  * the SSR entry for HTML generation.
  */
 import fs from "node:fs";
+import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { AppRoute } from "../routing/app-router.js";
 import type { MetadataFileRoute } from "./metadata-routes.js";
@@ -14,6 +15,7 @@ import type { NextRedirect, NextRewrite, NextHeader } from "../config/next-confi
 import { generateDevOriginCheckCode } from "./dev-origin-check.js";
 import { generateSafeRegExpCode, generateMiddlewareMatcherCode, generateNormalizePathCode } from "./middleware-codegen.js";
 import { isProxyFile } from "./middleware.js";
+import { MIME_TYPES } from "./mime.js";
 
 /**
  * Resolved config options relevant to App Router request handling.
@@ -50,6 +52,7 @@ export function generateRscEntry(
   trailingSlash?: boolean,
   config?: AppRouterConfig,
   instrumentationPath?: string | null,
+  root?: string,
 ): string {
   const bp = basePath ?? "";
   const ts = trailingSlash ?? false;
@@ -57,6 +60,14 @@ export function generateRscEntry(
   const rewrites = config?.rewrites ?? { beforeFiles: [], afterFiles: [], fallback: [] };
   const headers = config?.headers ?? [];
   const allowedOrigins = config?.allowedOrigins ?? [];
+  // Compute the public/ directory path for serving static files after rewrites.
+  // appDir is something like /project/app or /project/src/app; root is the Vite root.
+  // We require `root` for correctness — path.dirname(appDir) is wrong for src/app layouts
+  // (e.g. /project/src/public instead of /project/public).
+  if (!root) {
+    console.warn("[vinext] generateRscEntry: root not provided, static file serving after rewrites will be disabled");
+  }
+  const publicDir = root ? path.join(root, "public") : null;
   // Build import map for all page and layout files
   const imports: string[] = [];
   const importMap: Map<string, string> = new Map();
@@ -207,6 +218,8 @@ ${slotEntries.join(",\n")}
   });
 
   return `
+import __nodeFs from "node:fs";
+import __nodePath from "node:path";
 import {
   renderToReadableStream,
   decodeReply,
@@ -980,6 +993,7 @@ const __configRedirects = ${JSON.stringify(redirects)};
 const __configRewrites = ${JSON.stringify(rewrites)};
 const __configHeaders = ${JSON.stringify(headers)};
 const __allowedOrigins = ${JSON.stringify(allowedOrigins)};
+const __mimeTypes = ${JSON.stringify(MIME_TYPES)};
 
 ${generateDevOriginCheckCode(config?.allowedDevOrigins)}
 
@@ -1805,6 +1819,25 @@ async function _handleRequest(request, __reqCtx, _mwCtx) {
         return __proxyExternalRequest(request, __afterRewritten);
       }
       cleanPathname = __afterRewritten;
+      // If the rewritten path has a file extension, it may point to a static
+      // file in public/. Serve it directly before route matching.
+      const __afterExtname = __nodePath.extname(cleanPathname);
+      if (__afterExtname && ${JSON.stringify(publicDir)} !== null) {
+        const __afterPublicRoot = ${JSON.stringify(publicDir)};
+        const __afterPublicFile = __nodePath.resolve(__afterPublicRoot, "." + cleanPathname);
+        if (__afterPublicFile.startsWith(__afterPublicRoot + __nodePath.sep)) {
+          try {
+            const __afterStat = __nodeFs.statSync(__afterPublicFile);
+            if (__afterStat.isFile()) {
+              const __afterContent = __nodeFs.readFileSync(__afterPublicFile);
+              const __afterExt = __afterExtname.slice(1).toLowerCase();
+              setHeadersContext(null);
+              setNavigationContext(null);
+              return new Response(__afterContent, { status: 200, headers: { "Content-Type": __mimeTypes[__afterExt] ?? "application/octet-stream" } });
+            }
+          } catch { /* file doesn't exist or not readable */ }
+        }
+      }
     }
   }
 
@@ -1820,6 +1853,24 @@ async function _handleRequest(request, __reqCtx, _mwCtx) {
         return __proxyExternalRequest(request, __fallbackRewritten);
       }
       cleanPathname = __fallbackRewritten;
+      // Check if fallback targets a static file in public/
+      const __fbExtname = __nodePath.extname(cleanPathname);
+      if (__fbExtname && ${JSON.stringify(publicDir)} !== null) {
+        const __fbPublicRoot = ${JSON.stringify(publicDir)};
+        const __fbPublicFile = __nodePath.resolve(__fbPublicRoot, "." + cleanPathname);
+        if (__fbPublicFile.startsWith(__fbPublicRoot + __nodePath.sep)) {
+          try {
+            const __fbStat = __nodeFs.statSync(__fbPublicFile);
+            if (__fbStat.isFile()) {
+              const __fbContent = __nodeFs.readFileSync(__fbPublicFile);
+              const __fbExt = __fbExtname.slice(1).toLowerCase();
+              setHeadersContext(null);
+              setNavigationContext(null);
+              return new Response(__fbContent, { status: 200, headers: { "Content-Type": __mimeTypes[__fbExt] ?? "application/octet-stream" } });
+            }
+          } catch { /* file doesn't exist or not readable */ }
+        }
+      }
       match = matchRoute(cleanPathname, routes);
     }
   }

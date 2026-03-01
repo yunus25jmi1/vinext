@@ -40,6 +40,7 @@ import { scanMetadataFiles } from "./server/metadata-routes.js";
 import { staticExportPages } from "./build/static-export.js";
 import { detectPackageManager } from "./utils/project.js";
 import { asyncHooksStubPlugin } from "./plugins/async-hooks-stub.js";
+import { mimeType } from "./server/mime.js";
 import tsconfigPaths from "vite-tsconfig-paths";
 import react, { Options as VitePluginReactOptions } from "@vitejs/plugin-react";
 import MagicString from "magic-string";
@@ -2343,7 +2344,7 @@ hydrate();
             headers: nextConfig?.headers,
             allowedOrigins: nextConfig?.serverActionsAllowedOrigins,
             allowedDevOrigins: nextConfig?.allowedDevOrigins,
-          }, instrumentationPath);
+          }, instrumentationPath, root);
         }
         if (id === RESOLVED_APP_SSR_ENTRY && hasAppDir) {
           return generateSsrEntry();
@@ -2969,10 +2970,32 @@ hydrate();
                   nextConfig.rewrites.afterFiles,
                   reqCtx,
                 );
-                if (afterRewrite) resolvedUrl = afterRewrite;
+                if (afterRewrite) {
+                  // External rewrite from afterFiles — proxy to external URL
+                  if (isExternalUrl(afterRewrite)) {
+                    await proxyExternalRewriteNode(req, res, afterRewrite);
+                    return;
+                  }
+                  resolvedUrl = afterRewrite;
+                  // If the rewritten path has a file extension, it may point to a
+                  // static file in public/. Serve it directly before route matching
+                  // (which would miss it and SSR would return 404).
+                  const afterFilesPathname = afterRewrite.split("?")[0];
+                  if (path.extname(afterFilesPathname)) {
+                    const resolvedPublicDir = path.resolve(root, "public");
+                    const publicFilePath = path.resolve(resolvedPublicDir, "." + afterFilesPathname);
+                    if (publicFilePath.startsWith(resolvedPublicDir + path.sep) && fs.existsSync(publicFilePath) && fs.statSync(publicFilePath).isFile()) {
+                      const content = fs.readFileSync(publicFilePath);
+                      const ext = (path.extname(afterFilesPathname).slice(1)).toLowerCase();
+                      res.writeHead(200, { "Content-Type": mimeType(ext) });
+                      res.end(content);
+                      return;
+                    }
+                  }
+                }
               }
 
-              // External rewrite from afterFiles — proxy to external URL
+              // External rewrite (from beforeFiles) — proxy to external URL
               if (isExternalUrl(resolvedUrl)) {
                 await proxyExternalRewriteNode(req, res, resolvedUrl);
                 return;
@@ -3000,6 +3023,19 @@ hydrate();
                   if (isExternalUrl(fallbackRewrite)) {
                     await proxyExternalRewriteNode(req, res, fallbackRewrite);
                     return;
+                  }
+                  // Check if fallback targets a static file in public/
+                  const fallbackPathname = fallbackRewrite.split("?")[0];
+                  if (path.extname(fallbackPathname)) {
+                    const resolvedPublicDir = path.resolve(root, "public");
+                    const publicFilePath = path.resolve(resolvedPublicDir, "." + fallbackPathname);
+                    if (publicFilePath.startsWith(resolvedPublicDir + path.sep) && fs.existsSync(publicFilePath) && fs.statSync(publicFilePath).isFile()) {
+                      const content = fs.readFileSync(publicFilePath);
+                      const ext = (path.extname(fallbackPathname).slice(1)).toLowerCase();
+                      res.writeHead(200, { "Content-Type": mimeType(ext) });
+                      res.end(content);
+                      return;
+                    }
                   }
                   await handler(req, res, fallbackRewrite, mwStatus);
                   return;

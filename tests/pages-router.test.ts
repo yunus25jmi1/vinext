@@ -287,6 +287,27 @@ describe("Pages Router integration", () => {
     expect(html).toContain("About");
   });
 
+  it("serves static HTML file from public/ when afterFiles rewrite points to .html path", async () => {
+    // Regresses issue #199: rewrites (afterFiles) that map a clean URL to a .html file
+    // in public/ should serve the file, not return 404.
+    const res = await fetch(`${baseUrl}/static-html-page`);
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toContain("Hello from static HTML");
+    // Should be served with text/html content-type
+    expect(res.headers.get("content-type")).toMatch(/text\/html/i);
+  });
+
+  it("serves nested static HTML file from public/ subdirectory via rewrite", async () => {
+    // Nested rewrites: /auth/no-access → /auth/no-access.html should resolve
+    // to public/auth/no-access.html and serve it.
+    const res = await fetch(`${baseUrl}/auth/no-access`);
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toContain("Access denied from nested static HTML");
+    expect(res.headers.get("content-type")).toMatch(/text\/html/i);
+  });
+
   it("applies fallback rewrites from next.config.js", async () => {
     const res = await fetch(`${baseUrl}/fallback-rewrite`);
     expect(res.status).toBe(200);
