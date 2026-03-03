@@ -2236,9 +2236,10 @@ export function generateSsrEntry(): string {
   return `
 import { createFromReadableStream } from "@vitejs/plugin-rsc/ssr";
 import { renderToReadableStream, renderToStaticMarkup } from "react-dom/server.edge";
-import { setNavigationContext } from "next/navigation";
+import { setNavigationContext, ServerInsertedHTMLContext } from "next/navigation";
 import { runWithNavigationContext as _runWithNavCtx } from "vinext/navigation-state";
 import { safeJsonStringify } from "vinext/html";
+import { createElement as _ssrCE } from "react";
 
 /**
  * Collect all chunks from a ReadableStream into an array of text strings.
@@ -2374,7 +2375,7 @@ export async function handleSsr(rscStream, navContext, fontData) {
   }
 
   // Clear any stale callbacks from previous requests
-  const { clearServerInsertedHTML, flushServerInsertedHTML } = await import("next/navigation");
+  const { clearServerInsertedHTML, flushServerInsertedHTML, useServerInsertedHTML: _addInsertedHTML } = await import("next/navigation");
   clearServerInsertedHTML();
 
   try {
@@ -2395,6 +2396,15 @@ export async function handleSsr(rscStream, navContext, fontData) {
     // chunks arrive. Awaiting here would block until all async server components
     // complete, collapsing the streaming behavior.
     const root = createFromReadableStream(ssrStream);
+
+    // Wrap with ServerInsertedHTMLContext.Provider so libraries that use
+    // useContext(ServerInsertedHTMLContext) (Apollo Client, styled-components,
+    // etc.) get a working callback registration function during SSR.
+    // The provider value is useServerInsertedHTML — same function that direct
+    // callers use — so both paths push to the same ALS-backed callback array.
+    const ssrRoot = ServerInsertedHTMLContext
+      ? _ssrCE(ServerInsertedHTMLContext.Provider, { value: _addInsertedHTML }, root)
+      : root;
 
     // Get the bootstrap script content for the browser entry
     const bootstrapScriptContent =
@@ -2419,7 +2429,7 @@ export async function handleSsr(rscStream, navContext, fontData) {
     // client-side error boundaries from identifying the error type.
     // In production, non-navigation errors also get a digest hash so they
     // can be correlated with server logs without leaking details to clients.
-    const htmlStream = await renderToReadableStream(root, {
+    const htmlStream = await renderToReadableStream(ssrRoot, {
       bootstrapScriptContent,
       onError(error) {
         if (error && typeof error === "object" && "digest" in error) {
