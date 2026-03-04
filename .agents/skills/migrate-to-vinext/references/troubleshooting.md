@@ -24,6 +24,37 @@ When adding `"type": "module"`, any `.js` file using `module.exports` or `requir
 
 Alternatively, convert these files to ESM (`export default` syntax) and keep the `.js` extension.
 
+## Third-Party Package ESM Resolution Errors
+
+**Symptom:** `Cannot find module '...'` errors in dev server when using certain npm packages.
+
+**Example Error:**
+```
+Cannot find module '\node_modules.pnpm\validator@13.15.26\node_modules\validator\es\lib\util\assertString' 
+imported from \node_modules.pnpm\validator@13.15.26\node_modules\validator\es\lib\isEmail.js
+```
+
+**Cause:** Some ESM packages have complex internal import structures that Node.js module resolution can't handle when externalized. By default, Vite externalizes dependencies in SSR (loads them via Node.js) instead of transforming them through Vite's pipeline.
+
+**vinext Auto-Fix:** vinext automatically handles these known problematic packages:
+- `validator` ✅
+- `date-fns` ✅
+
+**No configuration needed** - vinext checks your `package.json` for these packages and adds them to `resolve.noExternal` for both the RSC and SSR environments.
+
+**For Other Packages:** If you encounter this error with a package not in the auto-detect list, add it manually to `vite.config.ts`:
+
+```typescript
+export default defineConfig({
+  plugins: [vinext()],
+  ssr: {
+    noExternal: ["your-problematic-package"],
+  },
+});
+```
+
+**Note:** vinext also auto-handles `nuqs` and `better-auth` for next/* shim compatibility.
+
 ## App Router vs Pages Router Issues
 
 **Symptom:** RSC-related errors, "client/server component" boundary violations.

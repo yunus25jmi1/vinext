@@ -6,11 +6,17 @@
  * to ensure large barrel-exporting libraries (e.g. mermaid) produce smaller bundles.
  */
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   clientManualChunks,
   clientTreeshakeConfig,
   computeLazyChunks,
   _stripServerExports,
+  detectProblematicESMPackages,
+  collectNoExternalPackages,
+  KNOWN_PROBLEMATIC_ESM_PACKAGES,
 } from "../packages/vinext/src/index.js";
 
 // The vinext config hook mutates process.env.NODE_ENV as a side effect (matching
@@ -1295,4 +1301,298 @@ export const getStaticPaths = () => [
     expect(result).toContain("export const getStaticPaths = undefined;");
     expect(result).not.toContain("a;b");
   });
+});
+
+// ─── detectProblematicESMPackages (backward-compat alias) ─────────────────────
+
+describe("detectProblematicESMPackages", () => {
+  function makePackageJson(root: string, deps: Record<string, string>) {
+    writeFileSync(
+      join(root, "package.json"),
+      JSON.stringify({ dependencies: deps }),
+    );
+  }
+
+  it("returns empty array when no problematic packages installed", () => {
+    const root = mkdtempSync(join(tmpdir(), "vinext-test-"));
+    makePackageJson(root, { react: "^19.0.0", "some-safe-package": "^1.0.0" });
+    expect(detectProblematicESMPackages(root)).toEqual([]);
+    rmSync(root, { recursive: true });
+  });
+
+  it("detects validator package automatically", () => {
+    const root = mkdtempSync(join(tmpdir(), "vinext-test-"));
+    makePackageJson(root, { validator: "^13.15.26" });
+    expect(detectProblematicESMPackages(root)).toContain("validator");
+    rmSync(root, { recursive: true });
+  });
+
+  it("detects date-fns package automatically", () => {
+    const root = mkdtempSync(join(tmpdir(), "vinext-test-"));
+    makePackageJson(root, { "date-fns": "^3.0.0" });
+    expect(detectProblematicESMPackages(root)).toContain("date-fns");
+    rmSync(root, { recursive: true });
+  });
+
+  it("detects multiple problematic packages at once", () => {
+    const root = mkdtempSync(join(tmpdir(), "vinext-test-"));
+    makePackageJson(root, { validator: "^13.0.0", "date-fns": "^3.0.0", react: "^19.0.0" });
+    const result = detectProblematicESMPackages(root);
+    expect(result).toContain("validator");
+    expect(result).toContain("date-fns");
+    expect(result).not.toContain("react");
+    rmSync(root, { recursive: true });
+  });
+
+  it("checks devDependencies too", () => {
+    const root = mkdtempSync(join(tmpdir(), "vinext-test-"));
+    writeFileSync(
+      join(root, "package.json"),
+      JSON.stringify({ devDependencies: { validator: "^13.15.26" } }),
+    );
+    expect(detectProblematicESMPackages(root)).toContain("validator");
+    rmSync(root, { recursive: true });
+  });
+
+  it("returns empty array when package.json does not exist", () => {
+    expect(detectProblematicESMPackages("/nonexistent/path")).toEqual([]);
+  });
+});
+
+// ─── collectNoExternalPackages ────────────────────────────────────────────────
+
+describe("collectNoExternalPackages", () => {
+  function makeTempProject(deps: Record<string, string> = {}, devDeps: Record<string, string> = {}): string {
+    const root = mkdtempSync(join(tmpdir(), "vinext-noext-test-"));
+    const pkgJson: Record<string, unknown> = { name: "test-project", private: true };
+    if (Object.keys(deps).length > 0) pkgJson.dependencies = deps;
+    if (Object.keys(devDeps).length > 0) pkgJson.devDependencies = devDeps;
+    writeFileSync(join(root, "package.json"), JSON.stringify(pkgJson));
+    return root;
+  }
+
+  it("returns empty array when no user config and no problematic packages", () => {
+    const root = makeTempProject({ react: "^19.0.0" });
+    expect(collectNoExternalPackages(undefined, root)).toEqual([]);
+    rmSync(root, { recursive: true });
+  });
+
+  it("includes user ssr.noExternal string", () => {
+    const root = makeTempProject();
+    expect(collectNoExternalPackages("validator", root)).toContain("validator");
+    rmSync(root, { recursive: true });
+  });
+
+  it("includes user ssr.noExternal array of strings", () => {
+    const root = makeTempProject();
+    const result = collectNoExternalPackages(["validator", "date-fns"], root);
+    expect(result).toContain("validator");
+    expect(result).toContain("date-fns");
+    rmSync(root, { recursive: true });
+  });
+
+  it("returns __ALL__ sentinel when ssr.noExternal is true", () => {
+    const root = makeTempProject();
+    expect(collectNoExternalPackages(true, root)).toEqual(["__ALL__"]);
+    rmSync(root, { recursive: true });
+  });
+
+  it("auto-detects validator in dependencies", () => {
+    const root = makeTempProject({ validator: "^13.15.0" });
+    expect(collectNoExternalPackages(undefined, root)).toContain("validator");
+    rmSync(root, { recursive: true });
+  });
+
+  it("merges user config with auto-detected packages (no duplicates)", () => {
+    const root = makeTempProject({ validator: "^13.15.0" });
+    const result = collectNoExternalPackages(["validator", "my-custom-pkg"], root);
+    expect(result).toContain("validator");
+    expect(result).toContain("my-custom-pkg");
+    expect(result.filter((p) => p === "validator")).toHaveLength(1);
+    rmSync(root, { recursive: true });
+  });
+
+  it("handles missing package.json gracefully", () => {
+    expect(collectNoExternalPackages(undefined, "/nonexistent/path")).toEqual([]);
+  });
+
+  it("skips RegExp items in ssr.noExternal array", () => {
+    const root = makeTempProject();
+    const result = collectNoExternalPackages(["validator", /some-regex/], root);
+    expect(result).toContain("validator");
+    expect(result).toHaveLength(1);
+    rmSync(root, { recursive: true });
+  });
+
+  it("KNOWN_PROBLEMATIC_ESM_PACKAGES includes expected packages", () => {
+    expect(KNOWN_PROBLEMATIC_ESM_PACKAGES).toContain("validator");
+    expect(KNOWN_PROBLEMATIC_ESM_PACKAGES).toContain("date-fns");
+  });
+});
+
+// ─── ssr.noExternal propagation to rsc/ssr environments (#189) ────────────────
+
+describe("ssr.noExternal propagation to environments", () => {
+  it("propagates ssr.noExternal to both rsc and ssr environments for App Router", async () => {
+    const vinext = (await import("../packages/vinext/src/index.js")).default;
+    const plugins = vinext();
+
+    const mainPlugin = plugins.find(
+      (p: any) => p.name === "vinext:config" && typeof p.config === "function",
+    );
+    expect(mainPlugin).toBeDefined();
+
+    const os = await import("node:os");
+    const fsp = await import("node:fs/promises");
+    const path = await import("node:path");
+
+    const tmpDir = await fsp.mkdtemp(path.join(os.tmpdir(), "vinext-noext-prop-"));
+    const rootNodeModules = path.resolve(import.meta.dirname, "../node_modules");
+    await fsp.symlink(rootNodeModules, path.join(tmpDir, "node_modules"), "junction");
+
+    await fsp.mkdir(path.join(tmpDir, "app"), { recursive: true });
+    await fsp.writeFile(
+      path.join(tmpDir, "app", "layout.tsx"),
+      `export default function RootLayout({ children }: { children: React.ReactNode }) { return <html><body>{children}</body></html>; }`,
+    );
+    await fsp.writeFile(
+      path.join(tmpDir, "app", "page.tsx"),
+      `export default function Home() { return <h1>Home</h1>; }`,
+    );
+    await fsp.writeFile(
+      path.join(tmpDir, "next.config.mjs"),
+      `export default {};`,
+    );
+    await fsp.writeFile(
+      path.join(tmpDir, "package.json"),
+      JSON.stringify({ name: "test", private: true, dependencies: {} }),
+    );
+
+    try {
+      const mockConfig = {
+        root: tmpDir,
+        build: {},
+        plugins: [],
+        ssr: { noExternal: ["validator", "my-pkg"] },
+      };
+      const result = await (mainPlugin as any).config(mockConfig, { command: "serve" });
+
+      // Both rsc and ssr environments should have resolve.noExternal
+      expect(result.environments.rsc.resolve.noExternal).toEqual(
+        expect.arrayContaining(["validator", "my-pkg"]),
+      );
+      expect(result.environments.ssr.resolve.noExternal).toEqual(
+        expect.arrayContaining(["validator", "my-pkg"]),
+      );
+    } finally {
+      await fsp.rm(tmpDir, { recursive: true, force: true }).catch(() => {});
+    }
+  }, 15000);
+
+  it("auto-detects problematic packages and adds to environment noExternal", async () => {
+    const vinext = (await import("../packages/vinext/src/index.js")).default;
+    const plugins = vinext();
+
+    const mainPlugin = plugins.find(
+      (p: any) => p.name === "vinext:config" && typeof p.config === "function",
+    );
+    expect(mainPlugin).toBeDefined();
+
+    const os = await import("node:os");
+    const fsp = await import("node:fs/promises");
+    const path = await import("node:path");
+
+    const tmpDir = await fsp.mkdtemp(path.join(os.tmpdir(), "vinext-noext-auto-"));
+    const rootNodeModules = path.resolve(import.meta.dirname, "../node_modules");
+    await fsp.symlink(rootNodeModules, path.join(tmpDir, "node_modules"), "junction");
+
+    await fsp.mkdir(path.join(tmpDir, "app"), { recursive: true });
+    await fsp.writeFile(
+      path.join(tmpDir, "app", "layout.tsx"),
+      `export default function RootLayout({ children }: { children: React.ReactNode }) { return <html><body>{children}</body></html>; }`,
+    );
+    await fsp.writeFile(
+      path.join(tmpDir, "app", "page.tsx"),
+      `export default function Home() { return <h1>Home</h1>; }`,
+    );
+    await fsp.writeFile(
+      path.join(tmpDir, "next.config.mjs"),
+      `export default {};`,
+    );
+    await fsp.writeFile(
+      path.join(tmpDir, "package.json"),
+      JSON.stringify({
+        name: "test",
+        private: true,
+        dependencies: { validator: "^13.15.0" },
+      }),
+    );
+
+    try {
+      const mockConfig = { root: tmpDir, build: {}, plugins: [] };
+      const result = await (mainPlugin as any).config(mockConfig, { command: "serve" });
+
+      expect(result.environments.rsc.resolve.noExternal).toEqual(
+        expect.arrayContaining(["validator"]),
+      );
+      expect(result.environments.ssr.resolve.noExternal).toEqual(
+        expect.arrayContaining(["validator"]),
+      );
+    } finally {
+      await fsp.rm(tmpDir, { recursive: true, force: true }).catch(() => {});
+    }
+  }, 15000);
+
+  it("propagates noExternal to top-level ssr config for Pages Router projects", async () => {
+    const vinext = (await import("../packages/vinext/src/index.js")).default;
+    const plugins = vinext();
+
+    const mainPlugin = plugins.find(
+      (p: any) => p.name === "vinext:config" && typeof p.config === "function",
+    );
+    expect(mainPlugin).toBeDefined();
+
+    const os = await import("node:os");
+    const fsp = await import("node:fs/promises");
+    const path = await import("node:path");
+
+    // Create a Pages Router project (pages/ dir, no app/ dir)
+    const tmpDir = await fsp.mkdtemp(path.join(os.tmpdir(), "vinext-noext-pages-"));
+    const rootNodeModules = path.resolve(import.meta.dirname, "../node_modules");
+    await fsp.symlink(rootNodeModules, path.join(tmpDir, "node_modules"), "junction");
+
+    await fsp.mkdir(path.join(tmpDir, "pages"), { recursive: true });
+    await fsp.writeFile(
+      path.join(tmpDir, "pages", "index.tsx"),
+      `export default function Home() { return <h1>Home</h1>; }`,
+    );
+    await fsp.writeFile(
+      path.join(tmpDir, "next.config.mjs"),
+      `export default {};`,
+    );
+    await fsp.writeFile(
+      path.join(tmpDir, "package.json"),
+      JSON.stringify({
+        name: "test-pages",
+        private: true,
+        dependencies: { validator: "^13.15.0" },
+      }),
+    );
+
+    try {
+      const mockConfig = { root: tmpDir, build: {}, plugins: [] };
+      const result = await (mainPlugin as any).config(mockConfig, { command: "serve" });
+
+      // Pages Router has no environments — noExternal goes to top-level ssr config
+      expect(result.ssr.noExternal).toEqual(
+        expect.arrayContaining(["validator"]),
+      );
+      // Should also still have React externalized
+      expect(result.ssr.external).toEqual(
+        expect.arrayContaining(["react", "react-dom"]),
+      );
+    } finally {
+      await fsp.rm(tmpDir, { recursive: true, force: true }).catch(() => {});
+    }
+  }, 15000);
 });

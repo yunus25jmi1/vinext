@@ -559,6 +559,82 @@ function computeLazyChunks(
   return lazyChunks;
 }
 
+/**
+ * Packages known to have broken ESM resolution when externalized.
+ *
+ * These packages use extensionless internal imports (e.g. `./util/assertString`
+ * instead of `./util/assertString.js`) in their ESM builds. When Vite
+ * externalizes them for SSR/RSC, Node.js loads the raw files and fails
+ * because strict ESM resolution requires file extensions.
+ *
+ * Adding them to `resolve.noExternal` forces Vite to bundle them through
+ * its transform pipeline, which resolves extensionless imports correctly.
+ *
+ * See: https://github.com/cloudflare/vinext/issues/189
+ */
+export const KNOWN_PROBLEMATIC_ESM_PACKAGES = [
+  "validator",     // validator/es/lib/isEmail.js can't resolve ./util/assertString
+  "date-fns",      // date-fns/esm has complex internal structure
+];
+
+/**
+ * Collect packages that should be added to `resolve.noExternal` for all
+ * server environments (rsc + ssr).
+ *
+ * Merges:
+ * 1. The user's `ssr.noExternal` config (which only affects the ssr
+ *    environment by default — we propagate it to rsc too)
+ * 2. Auto-detected problematic ESM packages that are installed in the project
+ *
+ * Returns a deduplicated string array. Returns `["__ALL__"]` if the user
+ * set `ssr.noExternal: true` (bundle everything).
+ */
+export function collectNoExternalPackages(
+  userSsrNoExternal: unknown,
+  projectRoot: string,
+): string[] {
+  const packages = new Set<string>();
+
+  // 1. Merge user's ssr.noExternal — can be string, string[], RegExp, or true
+  if (userSsrNoExternal === true) {
+    // true means "bundle everything" — return sentinel
+    return ["__ALL__"];
+  }
+  if (typeof userSsrNoExternal === "string") {
+    packages.add(userSsrNoExternal);
+  } else if (Array.isArray(userSsrNoExternal)) {
+    for (const item of userSsrNoExternal) {
+      if (typeof item === "string") packages.add(item);
+      // RegExp items are not propagated — only string package names are supported
+    }
+  }
+
+  // 2. Auto-detect installed problematic ESM packages
+  try {
+    const pkgJsonPath = path.join(projectRoot, "package.json");
+    if (fs.existsSync(pkgJsonPath)) {
+      const pkgJson = JSON.parse(fs.readFileSync(pkgJsonPath, "utf-8"));
+      const allDeps = {
+        ...pkgJson.dependencies,
+        ...pkgJson.devDependencies,
+      };
+      for (const pkg of KNOWN_PROBLEMATIC_ESM_PACKAGES) {
+        if (pkg in allDeps) {
+          packages.add(pkg);
+        }
+      }
+    }
+  } catch {
+    // Ignore errors reading package.json
+  }
+
+  return [...packages];
+}
+
+// Backward-compatible alias for existing tests and callers
+export const detectProblematicESMPackages = (root: string) =>
+  collectNoExternalPackages(undefined, root);
+
 export interface VinextOptions {
   /**
    * Base directory containing the app/ and pages/ directories.
@@ -1974,6 +2050,21 @@ hydrate();
         // environments where it can cause asset resolution issues.
         const isMultiEnv = hasAppDir || hasCloudflarePlugin || hasNitroPlugin;
 
+        // Collect packages that need resolve.noExternal for all server
+        // environments. This merges the user's ssr.noExternal (which Vite
+        // only applies to the default ssr env) with auto-detected
+        // problematic ESM packages. Computed here so it applies to both
+        // App Router (multi-env) and Pages Router (single-env) projects.
+        // Without this, packages like `validator` that ship broken ESM
+        // (missing file extensions) cause Node.js resolution failures (#189).
+        const noExternalPackages = collectNoExternalPackages(
+          config.ssr?.noExternal,
+          root,
+        );
+        const serverNoExternal = noExternalPackages.length > 0
+          ? (noExternalPackages.includes("__ALL__") ? true : noExternalPackages)
+          : undefined;
+
         const viteConfig: UserConfig = {
           // Disable Vite's default HTML serving - we handle all routing
           appType: "custom",
@@ -2037,9 +2128,13 @@ hydrate();
           // Externalize React packages from SSR transform — they are CJS and
           // must be loaded natively by Node, not through Vite's ESM evaluator.
           // Skip when targeting bundled runtimes (Cloudflare/Nitro bundle everything).
+          // Also propagate noExternal for problematic ESM packages so they
+          // are bundled by Vite instead of loaded natively (where Node's
+          // strict ESM resolution rejects extensionless imports).
           ...(hasCloudflarePlugin || hasNitroPlugin ? {} : {
             ssr: {
               external: ["react", "react-dom", "react-dom/server"],
+              ...(serverNoExternal ? { noExternal: serverNoExternal } : {}),
             },
           }),
           resolve: {
@@ -2088,10 +2183,13 @@ hydrate();
             `${relAppDir}/**/*.{tsx,ts,jsx,js}`,
           ];
 
+          // For App Router, propagate noExternal to BOTH rsc and ssr
+          // environments (the top-level ssr.noExternal only affects the
+          // default ssr env, not the rsc env).
           viteConfig.environments = {
             rsc: {
-              ...(hasCloudflarePlugin || hasNitroPlugin ? {} : {
-                resolve: {
+              resolve: {
+                ...(hasCloudflarePlugin || hasNitroPlugin ? {} : {
                   // Externalize native/heavy packages so the RSC environment
                   // loads them natively via Node rather than through Vite's
                   // ESM module evaluator (which can't handle native addons).
@@ -2103,8 +2201,9 @@ hydrate();
                     "@resvg/resvg-js",
                     "yoga-wasm-web",
                   ],
-                },
-              }),
+                }),
+                ...(serverNoExternal ? { noExternal: serverNoExternal } : {}),
+              },
               optimizeDeps: {
                 exclude: ["vinext"],
                 entries: appEntries,
@@ -2117,6 +2216,11 @@ hydrate();
               },
             },
             ssr: {
+              ...(serverNoExternal ? {
+                resolve: {
+                  noExternal: serverNoExternal,
+                },
+              } : {}),
               optimizeDeps: {
                 exclude: ["vinext"],
                 entries: appEntries,
