@@ -5220,9 +5220,90 @@ describe("next/compat/router shim", () => {
     expect(typeof mod.useRouter).toBe("function");
     expect((mod as Record<string, unknown>).default).toBeUndefined();
   });
+
+  it("useRouter returns null when no RouterContext.Provider wraps the tree", async () => {
+    const React = await import("react");
+    const { renderToStaticMarkup } = await import("react-dom/server");
+    const { useRouter } = await import(
+      "../packages/vinext/src/shims/compat-router.js"
+    );
+
+    let captured: unknown = "NOT_SET";
+    function Probe() {
+      captured = useRouter();
+      return React.createElement("div", null, "probe");
+    }
+
+    renderToStaticMarkup(React.createElement(Probe));
+    expect(captured).toBeNull();
+  });
+
+  it("useRouter returns the router when wrapWithRouterContext wraps the tree", async () => {
+    const React = await import("react");
+    const { renderToStaticMarkup } = await import("react-dom/server");
+    const { useRouter: useCompatRouter } = await import(
+      "../packages/vinext/src/shims/compat-router.js"
+    );
+    const { wrapWithRouterContext } = await import(
+      "../packages/vinext/src/shims/router.js"
+    );
+
+    let captured: unknown = "NOT_SET";
+    function Probe() {
+      captured = useCompatRouter();
+      return React.createElement("div", null, "probe");
+    }
+
+    const element = wrapWithRouterContext(React.createElement(Probe));
+    renderToStaticMarkup(element);
+    expect(captured).not.toBeNull();
+    expect(typeof (captured as any).pathname).toBe("string");
+    expect(typeof (captured as any).push).toBe("function");
+    expect(typeof (captured as any).replace).toBe("function");
+    expect(typeof (captured as any).back).toBe("function");
+    expect(typeof (captured as any).reload).toBe("function");
+  });
+
+  it("useRouter returns router reflecting SSR context when set", async () => {
+    const React = await import("react");
+    const { renderToStaticMarkup } = await import("react-dom/server");
+    const { useRouter: useCompatRouter } = await import(
+      "../packages/vinext/src/shims/compat-router.js"
+    );
+    const { wrapWithRouterContext, setSSRContext } = await import(
+      "../packages/vinext/src/shims/router.js"
+    );
+
+    setSSRContext({
+      pathname: "/posts/42",
+      query: { id: "42" },
+      asPath: "/posts/42?tab=comments",
+    });
+
+    let captured: unknown = "NOT_SET";
+    function Probe() {
+      captured = useCompatRouter();
+      return React.createElement("div", null, "probe");
+    }
+
+    const element = wrapWithRouterContext(React.createElement(Probe));
+    renderToStaticMarkup(element);
+
+    setSSRContext(null);
+
+    expect(captured).not.toBeNull();
+    expect((captured as any).pathname).toBe("/posts/42");
+    expect((captured as any).asPath).toBe("/posts/42?tab=comments");
+    expect((captured as any).query.id).toBe("42");
+  });
 });
 
 describe("Pages Router router helpers", () => {
+  it("exports wrapWithRouterContext function", async () => {
+    const mod = await import("../packages/vinext/src/shims/router.js");
+    expect(typeof mod.wrapWithRouterContext).toBe("function");
+  });
+
   describe("isExternalUrl", () => {
     it("detects https:// as external", () => {
       expect(isExternalUrl("https://example.com")).toBe(true);

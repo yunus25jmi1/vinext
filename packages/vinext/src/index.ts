@@ -769,7 +769,7 @@ import React from "react";
 import { renderToReadableStream } from "react-dom/server.edge";
 import { resetSSRHead, getSSRHeadHTML } from "next/head";
 import { flushPreloads } from "next/dynamic";
-import { setSSRContext } from "next/router";
+import { setSSRContext, wrapWithRouterContext } from "next/router";
 import { getCacheHandler } from "next/cache";
 import { runWithFetchCache } from "vinext/fetch-cache";
 import { _runWithCacheState } from "next/cache";
@@ -1334,6 +1334,7 @@ export async function renderPage(request, url, manifest) {
     } else {
       element = React.createElement(PageComponent, pageProps);
     }
+    element = wrapWithRouterContext(element);
 
     if (typeof resetSSRHead === "function") resetSSRHead();
     if (typeof flushPreloads === "function") await flushPreloads();
@@ -1431,6 +1432,7 @@ export async function renderPage(request, url, manifest) {
       } else {
         isrElement = React.createElement(PageComponent, pageProps);
       }
+      isrElement = wrapWithRouterContext(isrElement);
       var isrHtml = await renderToStringAsync(isrElement);
       var fullHtml = shellPrefix + isrHtml + shellSuffix;
       var isrPathname = url.split("?")[0];
@@ -1596,6 +1598,10 @@ async function hydrate() {
   ` : `
   element = React.createElement(PageComponent, pageProps);
   `}
+
+  // Wrap with RouterContext.Provider so next/compat/router works during hydration
+  const { wrapWithRouterContext } = await import("next/router");
+  element = wrapWithRouterContext(element);
 
   const container = document.getElementById("__next");
   if (!container) {
