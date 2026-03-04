@@ -5,7 +5,8 @@
  * Backed by the browser History API. Supports client-side navigation
  * by fetching new page data and re-rendering the React root.
  */
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, createElement, type ReactElement } from "react";
+import { RouterContext } from "./internal/router-context.js";
 import { isValidModulePath } from "../client/validate-module-path.js";
 
 /** basePath from next.config.js, injected by the plugin at build time */
@@ -388,6 +389,9 @@ async function navigateClient(url: string): Promise<void> {
       element = React.createElement(PageComponent, pageProps);
     }
 
+    // Wrap with RouterContext.Provider so next/compat/router works
+    element = wrapWithRouterContext(element);
+
     root.render(element);
   } catch (err) {
     console.error("[vinext] Client navigation failed:", err);
@@ -598,6 +602,57 @@ if (typeof window !== "undefined") {
       window.dispatchEvent(new CustomEvent("vinext:navigate"));
     });
   });
+}
+
+/**
+ * Wrap a React element in a RouterContext.Provider so that
+ * next/compat/router's useRouter() returns the real Pages Router value.
+ *
+ * This is a plain function, NOT a React component — it builds the router
+ * value object directly from the current SSR context (server) or
+ * window.location + Router singleton (client), avoiding duplicate state
+ * that a hook-based component would create.
+ */
+export function wrapWithRouterContext(element: ReactElement): ReactElement {
+  const { pathname, query, asPath } = getPathnameAndQuery();
+
+  const _ssrState = _getSSRContext();
+  const locale = typeof window === "undefined"
+    ? _ssrState?.locale
+    : (window as any).__VINEXT_LOCALE__;
+  const locales = typeof window === "undefined"
+    ? _ssrState?.locales
+    : (window as any).__VINEXT_LOCALES__;
+  const defaultLocale = typeof window === "undefined"
+    ? _ssrState?.defaultLocale
+    : (window as any).__VINEXT_DEFAULT_LOCALE__;
+
+  const route = typeof window !== "undefined"
+    ? ((window as any).__NEXT_DATA__?.page ?? pathname)
+    : pathname;
+
+  const routerValue = {
+    pathname,
+    route,
+    query,
+    asPath,
+    basePath: __basePath,
+    locale,
+    locales,
+    defaultLocale,
+    isReady: true,
+    isPreview: false,
+    isFallback: typeof window !== "undefined" && (window as any).__NEXT_DATA__?.isFallback === true,
+    push: Router.push,
+    replace: Router.replace,
+    back: Router.back,
+    reload: Router.reload,
+    prefetch: Router.prefetch,
+    beforePopState: Router.beforePopState,
+    events: routerEvents,
+  };
+
+  return createElement(RouterContext.Provider, { value: routerValue }, element) as ReactElement;
 }
 
 // Also export a default Router singleton for `import Router from 'next/router'`
