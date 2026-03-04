@@ -241,6 +241,22 @@ function extractRouteParamNames(pattern: string): string[] {
   return names;
 }
 
+function getI18nInfo(): { locale: string | undefined; locales: string[] | undefined; defaultLocale: string | undefined } {
+  const ssrState = _getSSRContext();
+  if (typeof window === "undefined") {
+    return {
+      locale: ssrState?.locale,
+      locales: ssrState?.locales,
+      defaultLocale: ssrState?.defaultLocale,
+    };
+  }
+  return {
+    locale: (window as any).__VINEXT_LOCALE__,
+    locales: (window as any).__VINEXT_LOCALES__,
+    defaultLocale: (window as any).__VINEXT_DEFAULT_LOCALE__,
+  };
+}
+
 function getPathnameAndQuery(): {
   pathname: string;
   query: Record<string, string>;
@@ -534,16 +550,7 @@ export function useRouter(): NextRouter {
   }, []);
 
   // Get i18n info from SSR context or window
-  const _ssrState = _getSSRContext();
-  const locale = typeof window === "undefined"
-    ? _ssrState?.locale
-    : (window as any).__VINEXT_LOCALE__;
-  const locales = typeof window === "undefined"
-    ? _ssrState?.locales
-    : (window as any).__VINEXT_LOCALES__;
-  const defaultLocale = typeof window === "undefined"
-    ? _ssrState?.defaultLocale
-    : (window as any).__VINEXT_DEFAULT_LOCALE__;
+  const { locale, locales, defaultLocale } = getI18nInfo();
 
   // route is the route pattern (e.g., "/posts/[id]"), not the actual path
   const route = typeof window !== "undefined"
@@ -615,17 +622,7 @@ if (typeof window !== "undefined") {
  */
 export function wrapWithRouterContext(element: ReactElement): ReactElement {
   const { pathname, query, asPath } = getPathnameAndQuery();
-
-  const _ssrState = _getSSRContext();
-  const locale = typeof window === "undefined"
-    ? _ssrState?.locale
-    : (window as any).__VINEXT_LOCALE__;
-  const locales = typeof window === "undefined"
-    ? _ssrState?.locales
-    : (window as any).__VINEXT_LOCALES__;
-  const defaultLocale = typeof window === "undefined"
-    ? _ssrState?.defaultLocale
-    : (window as any).__VINEXT_DEFAULT_LOCALE__;
+  const { locale, locales, defaultLocale } = getI18nInfo();
 
   const route = typeof window !== "undefined"
     ? ((window as any).__NEXT_DATA__?.page ?? pathname)
