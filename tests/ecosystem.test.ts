@@ -406,3 +406,27 @@ describe("shadcn", () => {
     expect(html).toContain("Open Menu");
   });
 });
+
+// ─── validator ──────────────────────────────────────────────────────────────
+
+describe("validator", () => {
+  let proc: ChildProcess | null = null;
+  let fetchPage: (pathname: string) => Promise<{ html: string; status: number }>;
+
+  beforeAll(async () => {
+    const fixture = await startFixture("validator", 4405);
+    proc = fixture.process;
+    fetchPage = fixture.fetchPage;
+  }, 30000);
+
+  afterAll(() => killProcess(proc));
+
+  it("can import and use validator/es/lib/isEmail.js in SSR", async () => {
+    const { html, status } = await fetchPage("/");
+    expect(status).toBe(200);
+    expect(html).toContain("<h1>Validator Test</h1>");
+    // React adds HTML comments for hydration markers, so check without whitespace sensitivity
+    expect(html).toMatch(/Email:.*test@example\.com/);
+    expect(html).toMatch(/Valid:.*true/);
+  });
+});

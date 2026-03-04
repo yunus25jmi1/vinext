@@ -2059,6 +2059,8 @@ hydrate();
           //   Any user-provided `ssr.noExternal` is intentionally superseded
           //   by this setting; only `ssr.external` entries escape Vite's transform.
           // Skip when targeting bundled runtimes (Cloudflare/Nitro bundle everything).
+          // This also resolves extensionless-import issues in packages like
+          // `validator` (see #189) by routing them through Vite's resolver.
           ...(hasCloudflarePlugin || hasNitroPlugin ? {} : {
             ssr: {
               external: ["react", "react-dom", "react-dom/server"],
