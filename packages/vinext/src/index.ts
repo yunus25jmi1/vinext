@@ -2851,11 +2851,19 @@ hydrate();
         },
       },
     } as Plugin & { _dimCache: Map<string, { width: number; height: number }> },
-    // Google Fonts self-hosting:
-    // During production builds, fetches Google Fonts CSS + .woff2 files,
-    // caches them locally in .vinext/fonts/, and rewrites font constructor
-    // calls to pass _selfHostedCSS with @font-face rules pointing at local assets.
-    // In dev mode, this plugin is a no-op (CDN loading is used instead).
+    // Google Fonts import transform + self-hosting:
+    //
+    // This plugin does two things:
+    //
+    // 1. **Import rewriting (dev + build):** Detects `import { Inter } from 'next/font/google'`
+    //    and rewrites named font imports into `createFontLoader` calls. This eliminates the
+    //    need for a generated catalog file with ~1,900 named exports. Any Google Font name
+    //    works automatically — the font family is derived from the export name at compile time.
+    //
+    // 2. **Self-hosting (build only):** Fetches Google Fonts CSS + .woff2 files at build time,
+    //    caches them locally in .vinext/fonts/, and rewrites font constructor calls to pass
+    //    `_selfHostedCSS` with @font-face rules pointing at local assets. In dev mode, the
+    //    CDN is used instead.
     {
       name: "vinext:google-fonts",
       enforce: "pre",
@@ -2871,8 +2879,7 @@ hydrate();
 
       transform: {
         // Hook filter: only invoke JS when code contains 'next/font/google'.
-        // The _isBuild runtime check can't be expressed as a filter, but this
-        // still eliminates nearly all Rust-to-JS calls since very few files
+        // This eliminates nearly all Rust-to-JS calls since very few files
         // import from next/font/google.
         filter: {
           id: {
@@ -2882,109 +2889,200 @@ hydrate();
           code: "next/font/google",
         },
         async handler(code, id) {
-          if (!(this as any)._isBuild) return null;
           // Defensive guard — duplicates filter logic
           if (id.includes("node_modules")) return null;
           if (id.startsWith("\0")) return null;
           if (!id.match(/\.(tsx?|jsx?|mjs)$/)) return null;
           if (!code.includes("next/font/google")) return null;
 
-          // Match font constructor calls: Inter({ weight: ..., subsets: ... })
-          // We look for PascalCase or Name_Name identifiers followed by ({...})
-          // This regex captures the font name and the options object literal
-          const fontCallRe = /\b([A-Z][A-Za-z]*(?:_[A-Z][A-Za-z]*)*)\s*\(\s*(\{[^}]*\})\s*\)/g;
+          // Skip our own shim files — they contain 'next/font/google' in comments
+          // and re-export statements that should not be rewritten.
+          if (id.startsWith(path.resolve(__dirname, "shims") + path.sep)) return null;
 
-          // Also need to verify these names came from next/font/google import
-          const importRe = /import\s*\{([^}]+)\}\s*from\s*['"]next\/font\/google['"]/;
-          const importMatch = code.match(importRe);
-          if (!importMatch) return null;
+          // Parse all import statements from 'next/font/google'.
+          // The ^ anchor with 'm' flag ensures we only match real import statements
+          // at the start of a line, not occurrences inside comments or strings.
+          // Uses the 'gm' flags to handle multiple import statements in one file.
+          const importRe = /^[ \t]*import\s*\{([^}]+)\}\s*from\s*['"]next\/font\/google['"]\s*;?/gm;
+          const importMatches = Array.from(code.matchAll(importRe));
+          if (importMatches.length === 0) return null;
 
-          const importedNames = new Set(
-            importMatch[1].split(",").map((s) => s.trim()).filter(Boolean),
-          );
-
-          const s = new MagicString(code);
-          let hasChanges = false;
-
-          const cacheDir = (this as any)._cacheDir as string;
-          const fontCache = (this as any)._fontCache as Map<string, string>;
-
-          let match;
-          while ((match = fontCallRe.exec(code)) !== null) {
-            const [fullMatch, fontName, optionsStr] = match;
-            if (!importedNames.has(fontName)) continue;
-
-            // Convert PascalCase/Underscore to font family
-            const family = fontName.replace(/_/g, " ").replace(/([a-z])([A-Z])/g, "$1 $2");
-
-            // Parse options safely via AST — no eval/new Function
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            let options: Record<string, any> = {};
-            try {
-              const parsed = parseStaticObjectLiteral(optionsStr);
-              if (!parsed) continue; // Contains dynamic expressions, skip
-              options = parsed as Record<string, any>;
-            } catch {
-              continue; // Can't parse options statically, skip
-            }
-
-            // Build the Google Fonts CSS URL
-            const weights = options.weight
-              ? Array.isArray(options.weight) ? options.weight : [options.weight]
-              : [];
-            const styles = options.style
-              ? Array.isArray(options.style) ? options.style : [options.style]
-              : [];
-            const display = options.display ?? "swap";
-
-            let spec = family.replace(/\s+/g, "+");
-            if (weights.length > 0) {
-              const hasItalic = styles.includes("italic");
-              if (hasItalic) {
-                const pairs: string[] = [];
-                for (const w of weights) { pairs.push(`0,${w}`); pairs.push(`1,${w}`); }
-                spec += `:ital,wght@${pairs.join(";")}`;
-              } else {
-                spec += `:wght@${weights.join(";")}`;
-              }
-            } else if (styles.length === 0) {
-              // Request full variable weight range when no weight specified.
-              // Without this, Google Fonts returns only weight 400.
-              spec += `:wght@100..900`;
-            }
-            const params = new URLSearchParams();
-            params.set("family", spec);
-            params.set("display", display);
-            const cssUrl = `https://fonts.googleapis.com/css2?${params.toString()}`;
-
-            // Check cache
-            let localCSS = fontCache.get(cssUrl);
-            if (!localCSS) {
-              try {
-                localCSS = await fetchAndCacheFont(cssUrl, family, cacheDir);
-                fontCache.set(cssUrl, localCSS);
-              } catch {
-                // Fetch failed (offline?) — fall back to CDN mode
-                continue;
-              }
-            }
-
-            // Inject _selfHostedCSS into the options object
-            const matchStart = match.index;
-            const matchEnd = matchStart + fullMatch.length;
-            const escapedCSS = JSON.stringify(localCSS);
-            const closingBrace = optionsStr.lastIndexOf("}");
-            const optionsWithCSS = optionsStr.slice(0, closingBrace) +
-              (optionsStr.slice(0, closingBrace).trim().endsWith("{") ? "" : ", ") +
-              `_selfHostedCSS: ${escapedCSS}` +
-              optionsStr.slice(closingBrace);
-
-            const replacement = `${fontName}(${optionsWithCSS})`;
-            s.overwrite(matchStart, matchEnd, replacement);
-            hasChanges = true;
+          // Merge specifiers from all matched imports
+          const rawSpecifiers: string[] = [];
+          for (const m of importMatches) {
+            rawSpecifiers.push(...m[1].split(",").map((s) => s.trim()).filter(Boolean));
           }
 
-          if (!hasChanges) return null;
+          // Utility exports that are NOT font names — keep as regular imports.
+          // IMPORTANT: keep this set in sync with the non-default exports from
+          // packages/vinext/src/shims/font-google.ts (and its re-export barrel).
+          const utilityExports = new Set([
+            "buildGoogleFontsUrl", "getSSRFontLinks", "getSSRFontStyles",
+            "getSSRFontPreloads", "createFontLoader",
+          ]);
+
+          const typeSpecifiers: string[] = [];
+          const utilityImports: string[] = [];
+          const fontImports: { imported: string; local: string }[] = [];
+
+          for (const raw of rawSpecifiers) {
+            // Skip TypeScript inline type imports: `import { type X, Y } from ...`
+            if (raw.startsWith("type ")) {
+              typeSpecifiers.push(raw);
+              continue;
+            }
+            const asParts = raw.split(/\s+as\s+/);
+            const imported = asParts[0].trim();
+            const local = (asParts[1] || asParts[0]).trim();
+            if (utilityExports.has(imported)) {
+              utilityImports.push(raw);
+            } else {
+              fontImports.push({ imported, local });
+            }
+          }
+
+          // Nothing to transform if no font-name imports
+          if (fontImports.length === 0) return null;
+
+          const s = new MagicString(code);
+
+          // Build the replacement import statement + createFontLoader declarations.
+          // Font names are removed from the import and replaced with createFontLoader calls.
+          //
+          // Before: import { Inter, Roboto_Mono, buildGoogleFontsUrl } from 'next/font/google';
+          // After:  import { buildGoogleFontsUrl, createFontLoader as __vinext_clf } from 'next/font/google';
+          //         const Inter = /*#__PURE__*/ __vinext_clf("Inter");
+          //         const Roboto_Mono = /*#__PURE__*/ __vinext_clf("Roboto Mono");
+          const newSpecifiers = [
+            ...typeSpecifiers,
+            ...utilityImports,
+            "createFontLoader as __vinext_clf",
+          ];
+          const newImport = `import { ${newSpecifiers.join(", ")} } from 'next/font/google';`;
+
+          const fontDecls = fontImports.map((f) => {
+            // Derive font family name: underscores → spaces (e.g. Roboto_Mono → Roboto Mono)
+            const family = f.imported.replace(/_/g, " ");
+            return `const ${f.local} = /*#__PURE__*/ __vinext_clf(${JSON.stringify(family)});`;
+          }).join("\n");
+
+          // Track all overwritten import regions so the self-hosting pass can
+          // skip font constructor calls that overlap with them (avoids MagicString
+          // index corruption when an import and a call share the same line).
+          const overwrittenRanges: Array<[number, number]> = [];
+
+          // Replace the first import with the rewritten import + font declarations.
+          // Remove subsequent duplicate imports (their specifiers are already merged).
+          for (let i = 0; i < importMatches.length; i++) {
+            const m = importMatches[i];
+            const start = m.index!;
+            const end = start + m[0].length;
+            overwrittenRanges.push([start, end]);
+            if (i === 0) {
+              s.overwrite(start, end, newImport + "\n" + fontDecls);
+            } else {
+              // Remove duplicate import statement
+              s.overwrite(start, end, "/* merged into first next/font/google import */");
+            }
+          }
+
+          // ----- Build-only: self-hosted font CSS injection -----
+          if ((this as any)._isBuild) {
+            const fontLocals = new Set(fontImports.map((f) => f.local));
+            const cacheDir = (this as any)._cacheDir as string;
+            const fontCache = (this as any)._fontCache as Map<string, string>;
+
+            // Match font constructor calls: Inter({ weight: ..., subsets: ... })
+            // We look for PascalCase/Name_Name/Name_2 identifiers followed by ({...}).
+            // The segment after _ can start with any alphanumeric (e.g. Baloo_2, M_PLUS_1p).
+            const fontCallRe = /\b([A-Z][A-Za-z0-9]*(?:_[A-Za-z0-9]+)*)\s*\(\s*(\{[^}]*\})\s*\)/g;
+
+            let callMatch;
+            while ((callMatch = fontCallRe.exec(code)) !== null) {
+              const [fullCallMatch, fontName, optionsStr] = callMatch;
+              if (!fontLocals.has(fontName)) continue;
+
+              // Skip calls that overlap with an already-overwritten import region
+              // (e.g. import and call on the same line). MagicString uses original
+              // indices, so overlapping overwrites would throw.
+              const callStart = callMatch.index;
+              const callEnd = callStart + fullCallMatch.length;
+              if (overwrittenRanges.some(([s, e]) => callStart < e && callEnd > s)) continue;
+
+              // Find the matching font import to derive the family name
+              const fontSpec = fontImports.find((f) => f.local === fontName);
+              if (!fontSpec) continue;
+
+              // Convert import name to font family: underscores → spaces
+              const family = fontSpec.imported.replace(/_/g, " ");
+
+              // Parse options safely via AST — no eval/new Function
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              let options: Record<string, any> = {};
+              try {
+                const parsed = parseStaticObjectLiteral(optionsStr);
+                if (!parsed) continue; // Contains dynamic expressions, skip
+                options = parsed as Record<string, any>;
+              } catch {
+                continue; // Can't parse options statically, skip
+              }
+
+              // Build the Google Fonts CSS URL
+              const weights = options.weight
+                ? Array.isArray(options.weight) ? options.weight : [options.weight]
+                : [];
+              const styles = options.style
+                ? Array.isArray(options.style) ? options.style : [options.style]
+                : [];
+              const display = options.display ?? "swap";
+
+              let spec = family.replace(/\s+/g, "+");
+              if (weights.length > 0) {
+                const hasItalic = styles.includes("italic");
+                if (hasItalic) {
+                  const pairs: string[] = [];
+                  for (const w of weights) { pairs.push(`0,${w}`); pairs.push(`1,${w}`); }
+                  spec += `:ital,wght@${pairs.join(";")}`;
+                } else {
+                  spec += `:wght@${weights.join(";")}`;
+                }
+              } else if (styles.length === 0) {
+                // Request full variable weight range when no weight specified.
+                // Without this, Google Fonts returns only weight 400.
+                spec += `:wght@100..900`;
+              }
+              const params = new URLSearchParams();
+              params.set("family", spec);
+              params.set("display", display);
+              const cssUrl = `https://fonts.googleapis.com/css2?${params.toString()}`;
+
+              // Check cache
+              let localCSS = fontCache.get(cssUrl);
+              if (!localCSS) {
+                try {
+                  localCSS = await fetchAndCacheFont(cssUrl, family, cacheDir);
+                  fontCache.set(cssUrl, localCSS);
+                } catch {
+                  // Fetch failed (offline?) — fall back to CDN mode
+                  continue;
+                }
+              }
+
+              // Inject _selfHostedCSS into the options object
+              const matchStart = callMatch.index;
+              const matchEnd = matchStart + fullCallMatch.length;
+              const escapedCSS = JSON.stringify(localCSS);
+              const closingBrace = optionsStr.lastIndexOf("}");
+              const optionsWithCSS = optionsStr.slice(0, closingBrace) +
+                (optionsStr.slice(0, closingBrace).trim().endsWith("{") ? "" : ", ") +
+                `_selfHostedCSS: ${escapedCSS}` +
+                optionsStr.slice(closingBrace);
+
+              const replacement = `${fontName}(${optionsWithCSS})`;
+              s.overwrite(matchStart, matchEnd, replacement);
+            }
+          }
+
           return {
             code: s.toString(),
             map: s.generateMap({ hires: "boundary" }),
