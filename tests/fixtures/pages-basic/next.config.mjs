@@ -59,6 +59,11 @@ const nextConfig = {
           source: "/fallback-rewrite",
           destination: "/about",
         },
+        // Used by Vitest: pages-router.test.ts (fallback rewrite to static HTML in public/)
+        {
+          source: "/fallback-static-page",
+          destination: "/fallback-page.html",
+        },
       ],
     };
   },

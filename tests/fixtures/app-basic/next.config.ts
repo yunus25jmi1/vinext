@@ -102,6 +102,8 @@ const nextConfig: NextConfig = {
           has: [{ type: "cookie", key: "mw-fallback-user" }],
           destination: "/about",
         },
+        // Used by Vitest: app-router.test.ts (fallback rewrite to static HTML in public/)
+        { source: "/fallback-static-page", destination: "/fallback-page.html" },
       ],
     };
   },

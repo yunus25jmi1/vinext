@@ -2045,6 +2045,16 @@ describe("App Router next.config.js features (dev server integration)", () => {
     expect(res.headers.get("content-type")).toMatch(/text\/html/i);
   });
 
+  it("serves static HTML file from public/ when fallback rewrite points to .html path", async () => {
+    // Fallback rewrites run after route matching fails. /fallback-static-page has no
+    // matching app route, so the fallback rewrite maps it to /fallback-page.html in public/.
+    const res = await fetch(`${baseUrl}/fallback-static-page`);
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toContain("Hello from fallback static HTML");
+    expect(res.headers.get("content-type")).toMatch(/text\/html/i);
+  });
+
   it("applies custom headers from next.config.js on API routes", async () => {
     const res = await fetch(`${baseUrl}/api/hello`);
     expect(res.headers.get("x-custom-header")).toBe("vinext-app");
@@ -2183,6 +2193,8 @@ describe("App Router next.config.js features (generateRscEntry)", () => {
     // path.join uses OS separators; the generated code embeds via JSON.stringify
     const expectedPublicDir = path.join("/tmp/test", "public");
     expect(code).toContain(JSON.stringify(expectedPublicDir));
+    // __publicDir should be hoisted to module scope
+    expect(code).toContain("const __publicDir = " + JSON.stringify(expectedPublicDir));
     // Should contain the node:fs and node:path imports for the static file handler
     expect(code).toContain("__nodeFs");
     expect(code).toContain("__nodePath");

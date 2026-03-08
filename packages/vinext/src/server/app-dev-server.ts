@@ -65,11 +65,8 @@ export function generateRscEntry(
   const bodySizeLimit = config?.bodySizeLimit ?? 1 * 1024 * 1024;
   // Compute the public/ directory path for serving static files after rewrites.
   // appDir is something like /project/app or /project/src/app; root is the Vite root.
-  // We require `root` for correctness — path.dirname(appDir) is wrong for src/app layouts
+  // We need `root` for correctness — path.dirname(appDir) is wrong for src/app layouts
   // (e.g. /project/src/public instead of /project/public).
-  if (!root) {
-    console.warn("[vinext] generateRscEntry: root not provided, static file serving after rewrites will be disabled");
-  }
   const publicDir = root ? path.join(root, "public") : null;
   // Build import map for all page and layout files
   const imports: string[] = [];
@@ -1080,6 +1077,7 @@ const __configRewrites = ${JSON.stringify(rewrites)};
 const __configHeaders = ${JSON.stringify(headers)};
 const __allowedOrigins = ${JSON.stringify(allowedOrigins)};
 const __mimeTypes = ${JSON.stringify(MIME_TYPES)};
+const __publicDir = ${JSON.stringify(publicDir)};
 
 ${generateDevOriginCheckCode(config?.allowedDevOrigins)}
 
@@ -1918,12 +1916,11 @@ async function _handleRequest(request, __reqCtx, _mwCtx) {
       // If the rewritten path has a file extension, it may point to a static
       // file in public/. Serve it directly before route matching.
       const __afterExtname = __nodePath.extname(cleanPathname);
-      if (__afterExtname && ${JSON.stringify(publicDir)} !== null) {
-        const __afterPublicRoot = ${JSON.stringify(publicDir)};
+      if (__afterExtname && __publicDir !== null) {
         // "." + cleanPathname works because rewrite destinations always start with "/";
         // the traversal guard below catches any malformed path regardless.
-        const __afterPublicFile = __nodePath.resolve(__afterPublicRoot, "." + cleanPathname);
-        if (__afterPublicFile.startsWith(__afterPublicRoot + __nodePath.sep)) {
+        const __afterPublicFile = __nodePath.resolve(__publicDir, "." + cleanPathname);
+        if (__afterPublicFile.startsWith(__publicDir + __nodePath.sep)) {
           try {
             const __afterStat = __nodeFs.statSync(__afterPublicFile);
             if (__afterStat.isFile()) {
@@ -1953,11 +1950,10 @@ async function _handleRequest(request, __reqCtx, _mwCtx) {
       cleanPathname = __fallbackRewritten;
       // Check if fallback targets a static file in public/
       const __fbExtname = __nodePath.extname(cleanPathname);
-      if (__fbExtname && ${JSON.stringify(publicDir)} !== null) {
-        const __fbPublicRoot = ${JSON.stringify(publicDir)};
+      if (__fbExtname && __publicDir !== null) {
         // "." + cleanPathname: see afterFiles comment above — leading "/" is assumed.
-        const __fbPublicFile = __nodePath.resolve(__fbPublicRoot, "." + cleanPathname);
-        if (__fbPublicFile.startsWith(__fbPublicRoot + __nodePath.sep)) {
+        const __fbPublicFile = __nodePath.resolve(__publicDir, "." + cleanPathname);
+        if (__fbPublicFile.startsWith(__publicDir + __nodePath.sep)) {
           try {
             const __fbStat = __nodeFs.statSync(__fbPublicFile);
             if (__fbStat.isFile()) {

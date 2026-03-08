@@ -308,6 +308,16 @@ describe("Pages Router integration", () => {
     expect(res.headers.get("content-type")).toMatch(/text\/html/i);
   });
 
+  it("serves static HTML file from public/ when fallback rewrite points to .html path", async () => {
+    // Fallback rewrites run after route matching fails. /fallback-static-page has no
+    // matching pages route, so the fallback rewrite maps it to /fallback-page.html in public/.
+    const res = await fetch(`${baseUrl}/fallback-static-page`);
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toContain("Hello from fallback static HTML");
+    expect(res.headers.get("content-type")).toMatch(/text\/html/i);
+  });
+
   it("applies fallback rewrites from next.config.js", async () => {
     const res = await fetch(`${baseUrl}/fallback-rewrite`);
     expect(res.status).toBe(200);
