@@ -3608,12 +3608,12 @@ const __trailingSlash = true;
 const __configRedirects = [{"source":"/old","destination":"/new","permanent":true}];
 const __configRewrites = {"beforeFiles":[{"source":"/api/:path*","destination":"/backend/:path*"}],"afterFiles":[],"fallback":[]};
 const __configHeaders = [{"source":"/api/:path*","headers":[{"key":"X-Custom","value":"test"}]}];
-const __allowedOrigins = [];
+const __allowedOrigins = ["https://example.com"];
 
 
 // ── Dev server origin verification ──────────────────────────────────────
 // Block cross-origin requests to prevent data exfiltration during development.
-const __allowedDevOrigins = [];
+const __allowedDevOrigins = ["localhost:3001"];
 const __safeDevHosts = ["localhost", "127.0.0.1", "[::1]"];
 
 function __validateDevRequestOrigin(request) {

@@ -176,6 +176,8 @@ describe("App Router entry templates", () => {
           headers: [{ key: "X-Custom", value: "test" }],
         },
       ],
+      allowedOrigins: ["https://example.com"],
+      allowedDevOrigins: ["localhost:3001"],
     };
     const code = generateRscEntry(
       "/tmp/test/app",
@@ -228,7 +230,9 @@ describe("Pages Router entry templates", () => {
     expect(loaded).toBeTruthy();
     return typeof loaded === "string"
       ? loaded
-      : (loaded as any)?.code ?? "";
+      : typeof loaded === "object" && loaded !== null && "code" in loaded
+        ? loaded.code
+        : "";
   }
 
   it("server entry snapshot", async () => {
