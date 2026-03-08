@@ -5,6 +5,7 @@ import { appRouter, invalidateAppRouteCache } from "./routing/app-router.js";
 import { createValidFileMatcher } from "./routing/file-matcher.js";
 import { createSSRHandler } from "./server/dev-server.js";
 import { handleApiRoute } from "./server/api-handler.js";
+import { createDirectRunner } from "./server/dev-module-runner.js";
 import {
   generateRscEntry,
   generateSsrEntry,
@@ -678,6 +679,33 @@ export default function vinext(options: VinextOptions = {}): PluginOption[] {
       },
     });
 
+    // Generate instrumentation code if instrumentation.ts exists.
+    // For production (Cloudflare Workers), instrumentation.ts is bundled into the
+    // Worker and register() is called as a top-level await at module evaluation time —
+    // before any request is handled. This mirrors App Router behavior (generateRscEntry)
+    // and matches Next.js semantics: register() runs once on startup in the process
+    // that handles requests.
+    //
+    // The onRequestError handler is stored on globalThis so it is visible across
+    // all code within the Worker (same global scope).
+    const instrumentationImportCode = instrumentationPath
+      ? `import * as _instrumentation from ${JSON.stringify(instrumentationPath.replace(/\\/g, "/"))};`
+      : "";
+
+    const instrumentationInitCode = instrumentationPath
+      ? `// Run instrumentation register() once at module evaluation time — before any
+// requests are handled. Matches Next.js semantics: register() is called once
+// on startup in the process that handles requests.
+if (typeof _instrumentation.register === "function") {
+  await _instrumentation.register();
+}
+// Store the onRequestError handler on globalThis so it is visible to all
+// code within the Worker (same global scope).
+if (typeof _instrumentation.onRequestError === "function") {
+  globalThis.__VINEXT_onRequestErrorHandler__ = _instrumentation.onRequestError;
+}`
+      : "";
+
     // Generate middleware code if middleware.ts exists
     const middlewareImportCode = middlewarePath
       ? `import * as middlewareModule from ${JSON.stringify(middlewarePath.replace(/\\/g, "/"))};
@@ -793,7 +821,10 @@ import { runWithHeadState } from "vinext/head-state";
 import { safeJsonStringify } from "vinext/html";
 import { getSSRFontLinks as _getSSRFontLinks, getSSRFontStyles as _getSSRFontStylesGoogle, getSSRFontPreloads as _getSSRFontPreloadsGoogle } from "next/font/google";
 import { getSSRFontStyles as _getSSRFontStylesLocal, getSSRFontPreloads as _getSSRFontPreloadsLocal } from "next/font/local";
+${instrumentationImportCode}
 ${middlewareImportCode}
+
+${instrumentationInitCode}
 
 // i18n config (embedded at build time)
 const i18nConfig = ${i18nConfigJson};
@@ -1807,7 +1838,7 @@ hydrate();
         // Load next.config.js if present (always from project root, not src/)
         const phase = env?.command === "build" ? PHASE_PRODUCTION_BUILD : PHASE_DEVELOPMENT_SERVER;
         const rawConfig = await loadNextConfig(root, phase);
-        nextConfig = await resolveNextConfig(rawConfig);
+        nextConfig = await resolveNextConfig(rawConfig, root);
         fileMatcher = createValidFileMatcher(nextConfig.pageExtensions);
 
         // Merge env from next.config.js with NEXT_PUBLIC_* env vars
@@ -1864,6 +1895,7 @@ hydrate();
         // Build the shim alias map — used by both resolve.alias and resolveId
         // (resolveId handles .js extension variants for libraries like nuqs)
         nextShimMap = {
+          ...nextConfig.aliases,
           "next/link": path.join(shimsDir, "link"),
           "next/head": path.join(shimsDir, "head"),
           "next/router": path.join(shimsDir, "router"),
@@ -2458,6 +2490,34 @@ hydrate();
         // Watch pages directory for file additions/removals to invalidate route cache.
         const pageExtensions = fileMatcher.extensionRegex;
 
+        // Build a long-lived ModuleRunner for loading all Pages Router modules
+        // (middleware, API routes, SSR page rendering) on every request.
+        //
+        // We must NOT use server.ssrLoadModule() here: when @cloudflare/vite-plugin
+        // is present its environments replace the SSR transport, causing
+        // SSRCompatModuleRunner to crash with:
+        //   TypeError: Cannot read properties of undefined (reading 'outsideEmitter')
+        // on the very first request.
+        //
+        // createDirectRunner() builds a runner on environment.fetchModule() which
+        // is a plain async method — safe with all plugin combinations, including
+        // @cloudflare/vite-plugin.
+        //
+        // The runner is created lazily on first use so that all environments are
+        // fully registered before we inspect them. We prefer "ssr", then any
+        // non-"rsc" environment, then whatever is available.
+        let pagesRunner: import("vite/module-runner").ModuleRunner | null = null;
+        function getPagesRunner() {
+          if (!pagesRunner) {
+            const env =
+              server.environments["ssr"] ??
+              Object.values(server.environments).find((e) => e !== server.environments["rsc"]) ??
+              Object.values(server.environments)[0];
+            pagesRunner = createDirectRunner(env);
+          }
+          return pagesRunner;
+        }
+
         /**
          * Invalidate the virtual RSC entry module in Vite's module graph.
          *
@@ -2524,17 +2584,28 @@ hydrate();
         // Return a function to register middleware AFTER Vite's built-in middleware
         return () => {
           // Run instrumentation.ts register() if present (once at server startup).
-          // Must be inside the returned function — ssrLoadModule() requires the
-          // SSR environment's transport channel, which is not initialized until
-          // after configureServer() returns. (See issue #167)
+          // Must be inside the returned function so that all environments are
+          // fully registered before getPagesRunner() inspects them.
           //
           // App Router: register() is baked into the generated RSC entry as a
           // top-level await, so it runs inside the Worker process (or RSC Vite
           // environment) — the same process as request handling. Calling
           // runInstrumentation() here too would run it a second time in the host
           // process, which is wrong when @cloudflare/vite-plugin is present.
+          //
+          // Pages Router prod: register() is baked into generateServerEntry() as
+          // a top-level await, so it runs inside the Worker bundle — the same
+          // process as request handling. configureServer() is never called during
+          // a prod build, so there is no double-invocation risk there either.
+          //
+          // We pass getPagesRunner() (createDirectRunner) rather than server so
+          // that this is safe when @cloudflare/vite-plugin is present. That
+          // plugin replaces the SSR environment's hot channel, causing
+          // server.ssrLoadModule() to crash with outsideEmitter. The runner
+          // calls environment.fetchModule() directly and never touches the hot
+          // channel, making it safe with all Vite plugin combinations.
           if (instrumentationPath && !hasAppDir) {
-            runInstrumentation(server, instrumentationPath).catch((err) => {
+            runInstrumentation(getPagesRunner(), instrumentationPath).catch((err) => {
               console.error("[vinext] Instrumentation error:", err);
             });
           }
@@ -2832,7 +2903,7 @@ hydrate();
                       .map(([k, v]) => [k, Array.isArray(v) ? v.join(", ") : String(v)])
                   ),
                 });
-                const result = await runMiddleware(server, middlewarePath, middlewareRequest);
+                const result = await runMiddleware(getPagesRunner(), middlewarePath, middlewareRequest);
 
                 if (!result.continue) {
                   if (result.redirectUrl) {
