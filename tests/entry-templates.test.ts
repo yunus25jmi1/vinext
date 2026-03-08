@@ -74,6 +74,9 @@ const minimalAppRoutes: AppRoute[] = [
 ];
 
 // ── Pages Router fixture ──────────────────────────────────────────────
+// NOTE: Adding, removing, or renaming pages in this fixture will break the
+// Pages Router snapshots below. Run `pnpm test tests/entry-templates.test.ts -u`
+// to update them after intentional fixture changes.
 const PAGES_FIXTURE_DIR = path.resolve(
   import.meta.dirname,
   "./fixtures/pages-basic",
@@ -104,6 +107,21 @@ describe("App Router entry templates", () => {
       null,
       "",
       false,
+    );
+    expect(code).toMatchSnapshot();
+  });
+
+  it("generateRscEntry snapshot (with instrumentation)", () => {
+    const code = generateRscEntry(
+      "/tmp/test/app",
+      minimalAppRoutes,
+      null,
+      [],
+      null,
+      "",
+      false,
+      undefined,
+      "/tmp/test/instrumentation.ts",
     );
     expect(code).toMatchSnapshot();
   });
