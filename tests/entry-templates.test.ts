@@ -19,6 +19,7 @@ import {
 } from "../packages/vinext/src/server/app-dev-server.js";
 import type { AppRouterConfig } from "../packages/vinext/src/server/app-dev-server.js";
 import type { AppRoute } from "../packages/vinext/src/routing/app-router.js";
+import type { MetadataFileRoute } from "../packages/vinext/src/server/metadata-routes.js";
 import vinext from "../packages/vinext/src/index.js";
 
 // Workspace root (forward-slash normalised) used to replace absolute paths
@@ -89,6 +90,25 @@ const minimalAppRoutes: AppRoute[] = [
     layoutTreePositions: [0, 1],
     isDynamic: true,
     params: ["slug"],
+  },
+  {
+    pattern: "/dashboard",
+    pagePath: "/tmp/test/app/dashboard/page.tsx",
+    routePath: null,
+    layouts: ["/tmp/test/app/layout.tsx", "/tmp/test/app/dashboard/layout.tsx"],
+    templates: ["/tmp/test/app/dashboard/template.tsx"],
+    parallelSlots: [],
+    loadingPath: "/tmp/test/app/dashboard/loading.tsx",
+    errorPath: "/tmp/test/app/dashboard/error.tsx",
+    layoutErrorPaths: [null, "/tmp/test/app/dashboard/error.tsx"],
+    notFoundPath: "/tmp/test/app/dashboard/not-found.tsx",
+    notFoundPaths: [null, "/tmp/test/app/dashboard/not-found.tsx"],
+    forbiddenPath: null,
+    unauthorizedPath: null,
+    routeSegments: ["dashboard"],
+    layoutTreePositions: [0, 1],
+    isDynamic: false,
+    params: [],
   },
 ];
 
@@ -188,6 +208,28 @@ describe("App Router entry templates", () => {
       "/base",
       true,
       config,
+    );
+    expect(code).toMatchSnapshot();
+  });
+
+  it("generateRscEntry snapshot (with metadata routes)", () => {
+    const metadataRoutes: MetadataFileRoute[] = [
+      {
+        type: "sitemap",
+        isDynamic: true,
+        filePath: "/tmp/test/app/sitemap.ts",
+        servedUrl: "/sitemap.xml",
+        contentType: "application/xml",
+      },
+    ];
+    const code = generateRscEntry(
+      "/tmp/test/app",
+      minimalAppRoutes,
+      null,
+      metadataRoutes,
+      null,
+      "",
+      false,
     );
     expect(code).toMatchSnapshot();
   });
