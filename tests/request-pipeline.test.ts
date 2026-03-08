@@ -100,6 +100,27 @@ describe("normalizeTrailingSlash", () => {
     expect(res).not.toBeNull();
     expect(res!.headers.get("Location")).toBe("/about");
   });
+
+  it("does not redirect /api or /api/", () => {
+    expect(normalizeTrailingSlash("/api", "", true, "")).toBeNull();
+    expect(normalizeTrailingSlash("/api", "", false, "")).toBeNull();
+    expect(normalizeTrailingSlash("/api/", "", true, "")).toBeNull();
+    expect(normalizeTrailingSlash("/api/", "", false, "")).toBeNull();
+  });
+
+  it("redirects /api-docs when trailingSlash is true", () => {
+    const res = normalizeTrailingSlash("/api-docs", "", true, "");
+    expect(res).not.toBeNull();
+    expect(res!.status).toBe(308);
+    expect(res!.headers.get("Location")).toBe("/api-docs/");
+  });
+
+  it("redirects /api-docs/ when trailingSlash is false", () => {
+    const res = normalizeTrailingSlash("/api-docs/", "", false, "");
+    expect(res).not.toBeNull();
+    expect(res!.status).toBe(308);
+    expect(res!.headers.get("Location")).toBe("/api-docs");
+  });
 });
 
 // ── validateCsrfOrigin ──────────────────────────────────────────────────

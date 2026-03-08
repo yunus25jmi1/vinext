@@ -74,7 +74,7 @@ export function normalizeTrailingSlash(
   trailingSlash: boolean,
   search: string,
 ): Response | null {
-  if (pathname === "/" || pathname.startsWith("/api")) {
+  if (pathname === "/" || pathname === "/api" || pathname.startsWith("/api/")) {
     return null;
   }
   const hasTrailing = pathname.endsWith("/");

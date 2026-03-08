@@ -2858,7 +2858,7 @@ hydrate();
 
               // Normalize trailing slash based on next.config.js trailingSlash setting.
               // Redirect to the canonical form if needed.
-              if (nextConfig && pathname !== "/" && !pathname.startsWith("/api")) {
+              if (nextConfig && pathname !== "/" && pathname !== "/api" && !pathname.startsWith("/api/")) {
                 const hasTrailing = pathname.endsWith("/");
                 if (nextConfig.trailingSlash && !hasTrailing) {
                   // trailingSlash: true — redirect /about → /about/
