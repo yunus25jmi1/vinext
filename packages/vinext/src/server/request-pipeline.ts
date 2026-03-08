@@ -201,31 +201,19 @@ export function validateImageUrl(
 }
 
 /**
- * Unpack `x-middleware-request-*` headers and strip internal middleware headers.
+ * Strip internal `x-middleware-*` headers from a Headers object.
  *
- * Middleware can set `x-middleware-request-<name>` headers to modify the
- * request headers that downstream handlers see. This function:
- * 1. Copies `x-middleware-request-*` values to the actual header names
- * 2. Strips ALL `x-middleware-*` headers from the set (they're internal signals)
+ * Middleware uses `x-middleware-*` headers as internal signals (e.g.
+ * `x-middleware-next`, `x-middleware-rewrite`, `x-middleware-request-*`).
+ * These must be removed before sending the response to the client.
  *
  * @param headers - The Headers object to modify in place
- * @param applyTo - Optional target Headers to receive the unpacked values
  */
-export function processMiddlewareHeaders(
-  headers: Headers,
-  applyTo?: Headers,
-): void {
-  const prefix = "x-middleware-request-";
+export function processMiddlewareHeaders(headers: Headers): void {
   const keysToDelete: string[] = [];
 
   for (const key of headers.keys()) {
-    if (key.startsWith(prefix)) {
-      const realName = key.slice(prefix.length);
-      if (applyTo) {
-        applyTo.set(realName, headers.get(key)!);
-      }
-      keysToDelete.push(key);
-    } else if (key.startsWith("x-middleware-")) {
+    if (key.startsWith("x-middleware-")) {
       keysToDelete.push(key);
     }
   }

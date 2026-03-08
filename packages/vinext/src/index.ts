@@ -3853,9 +3853,7 @@ function applyRedirects(
   return false;
 }
 
-/**
- * Proxy an external rewrite in the Node.js dev server context.
- *
+/*
  * Converts the Node.js IncomingMessage into a Web Request, calls
  * proxyExternalRequest(), and pipes the response back to the Node.js
  * ServerResponse.
