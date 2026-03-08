@@ -5,11 +5,47 @@
  * Unsupported options are logged as warnings.
  */
 import path from "node:path";
-import { pathToFileURL } from "node:url";
 import { createRequire } from "node:module";
 import fs from "node:fs";
 import { PHASE_DEVELOPMENT_SERVER } from "../shims/constants.js";
 import { normalizePageExtensions } from "../routing/file-matcher.js";
+
+/**
+ * Parse a body size limit value (string or number) into bytes.
+ * Accepts Next.js-style strings like "1mb", "500kb", "10mb", bare number strings like "1048576" (bytes),
+ * and numeric values. Supports b, kb, mb, gb, tb, pb units.
+ * Returns the default 1MB if the value is not provided or invalid.
+ * Throws if the parsed value is less than 1.
+ */
+export function parseBodySizeLimit(value: string | number | undefined | null): number {
+  if (value === undefined || value === null) return 1 * 1024 * 1024;
+  if (typeof value === "number") {
+    if (value < 1) throw new Error(`Body size limit must be a positive number, got ${value}`);
+    return value;
+  }
+  const trimmed = value.trim();
+  const match = trimmed.match(/^(\d+(?:\.\d+)?)\s*(b|kb|mb|gb|tb|pb)?$/i);
+  if (!match) {
+    console.warn(
+      `[vinext] Invalid bodySizeLimit value: "${value}". Expected a number or a string like "1mb", "500kb". Falling back to 1MB.`,
+    );
+    return 1 * 1024 * 1024;
+  }
+  const num = parseFloat(match[1]);
+  const unit = (match[2] ?? "b").toLowerCase();
+  let bytes: number;
+  switch (unit) {
+    case "b": bytes = Math.floor(num); break;
+    case "kb": bytes = Math.floor(num * 1024); break;
+    case "mb": bytes = Math.floor(num * 1024 * 1024); break;
+    case "gb": bytes = Math.floor(num * 1024 * 1024 * 1024); break;
+    case "tb": bytes = Math.floor(num * 1024 * 1024 * 1024 * 1024); break;
+    case "pb": bytes = Math.floor(num * 1024 * 1024 * 1024 * 1024 * 1024); break;
+    default: return 1 * 1024 * 1024;
+  }
+  if (bytes < 1) throw new Error(`Body size limit must be a positive number, got ${bytes}`);
+  return bytes;
+}
 
 export interface HasCondition {
   type: "header" | "cookie" | "query" | "host";
@@ -84,9 +120,20 @@ export interface NextConfig {
   redirects?: () => Promise<NextRedirect[]> | NextRedirect[];
   /** URL rewrite rules */
   rewrites?: () =>
-    | Promise<NextRewrite[] | { beforeFiles: NextRewrite[]; afterFiles: NextRewrite[]; fallback: NextRewrite[] }>
+    | Promise<
+        | NextRewrite[]
+        | {
+            beforeFiles: NextRewrite[];
+            afterFiles: NextRewrite[];
+            fallback: NextRewrite[];
+          }
+      >
     | NextRewrite[]
-    | { beforeFiles: NextRewrite[]; afterFiles: NextRewrite[]; fallback: NextRewrite[] };
+    | {
+        beforeFiles: NextRewrite[];
+        afterFiles: NextRewrite[];
+        fallback: NextRewrite[];
+      };
   /** Custom response headers */
   headers?: () => Promise<NextHeader[]> | NextHeader[];
   /** Image optimization config */
@@ -152,10 +199,14 @@ export interface ResolvedNextConfig {
   i18n: NextI18nConfig | null;
   /** MDX remark/rehype/recma plugins extracted from @next/mdx config */
   mdx: MdxOptions | null;
+  /** Explicit module aliases preserved from wrapped next.config plugins. */
+  aliases: Record<string, string>;
   /** Extra allowed origins for dev server access (from allowedDevOrigins). */
   allowedDevOrigins: string[];
   /** Extra allowed origins for server action CSRF validation (from experimental.serverActions.allowedOrigins). */
   serverActionsAllowedOrigins: string[];
+  /** Parsed body size limit for server actions in bytes (from experimental.serverActions.bodySizeLimit). Defaults to 1MB. */
+  serverActionsBodySizeLimit: number;
 }
 
 const CONFIG_FILES = [
@@ -186,7 +237,10 @@ function isCjsError(e: unknown): boolean {
  * Unwrap the config value from a loaded module, calling it if it's a
  * function-form config (Next.js supports `module.exports = (phase, opts) => config`).
  */
-async function unwrapConfig(mod: any, phase: string = PHASE_DEVELOPMENT_SERVER): Promise<NextConfig> {
+async function unwrapConfig(
+  mod: any,
+  phase: string = PHASE_DEVELOPMENT_SERVER,
+): Promise<NextConfig> {
   const config = mod.default ?? mod;
   if (typeof config === "function") {
     const result = await config(phase, {
@@ -201,20 +255,27 @@ async function unwrapConfig(mod: any, phase: string = PHASE_DEVELOPMENT_SERVER):
  * Find and load the next.config file from the project root.
  * Returns null if no config file is found.
  *
- * Attempts ESM dynamic `import()` first. If the file uses CJS constructs
- * (`require`, `module.exports`) that aren't available in ESM context, falls
- * back to loading it via `createRequire` so that CJS config files (common in
- * the Next.js ecosystem for plugin wrappers like nextra, @next/mdx, etc.) work.
+ * Attempts Vite's module runner first so TS configs and extensionless local
+ * imports (e.g. `import "./env"`) resolve consistently. If loading fails due
+ * to CJS constructs (`require`, `module.exports`), falls back to `createRequire`
+ * so common CJS plugin wrappers (nextra, @next/mdx, etc.) still work.
  */
-export async function loadNextConfig(root: string, phase: string = PHASE_DEVELOPMENT_SERVER): Promise<NextConfig | null> {
+export async function loadNextConfig(
+  root: string,
+  phase: string = PHASE_DEVELOPMENT_SERVER,
+): Promise<NextConfig | null> {
   for (const filename of CONFIG_FILES) {
     const configPath = path.join(root, filename);
     if (!fs.existsSync(configPath)) continue;
 
     try {
-      // Use dynamic import for ESM/TS config files
-      const fileUrl = pathToFileURL(configPath).href;
-      const mod = await import(fileUrl);
+      // Load config via Vite's module runner (TS + extensionless import support)
+      const { runnerImport } = await import("vite");
+      const { module: mod } = await runnerImport(configPath, {
+        root,
+        logLevel: "error",
+        clearScreen: false,
+      });
       return await unwrapConfig(mod, phase);
     } catch (e) {
       // If the error indicates a CJS file loaded in ESM context, retry with
@@ -248,6 +309,7 @@ export async function loadNextConfig(root: string, phase: string = PHASE_DEVELOP
  */
 export async function resolveNextConfig(
   config: NextConfig | null,
+  root: string = process.cwd(),
 ): Promise<ResolvedNextConfig> {
   if (!config) {
     return {
@@ -263,8 +325,10 @@ export async function resolveNextConfig(
       images: undefined,
       i18n: null,
       mdx: null,
+      aliases: {},
       allowedDevOrigins: [],
       serverActionsAllowedOrigins: [],
+      serverActionsBodySizeLimit: 1 * 1024 * 1024,
     };
   }
 
@@ -276,7 +340,11 @@ export async function resolveNextConfig(
   }
 
   // Resolve rewrites
-  let rewrites = { beforeFiles: [] as NextRewrite[], afterFiles: [] as NextRewrite[], fallback: [] as NextRewrite[] };
+  let rewrites = {
+    beforeFiles: [] as NextRewrite[],
+    afterFiles: [] as NextRewrite[],
+    fallback: [] as NextRewrite[],
+  };
   if (config.rewrites) {
     const result = await config.rewrites();
     if (Array.isArray(result)) {
@@ -296,26 +364,42 @@ export async function resolveNextConfig(
     headers = await config.headers();
   }
 
-  // Extract MDX remark/rehype plugins from @next/mdx's webpack wrapper
-  const mdx = extractMdxOptions(config);
+  // Probe wrapped webpack config once so alias extraction and MDX extraction
+  // observe the same mock environment.
+  const webpackProbe = await probeWebpackConfig(config, root);
+  const mdx = webpackProbe.mdx;
+  const aliases = {
+    ...extractTurboAliases(config, root),
+    ...webpackProbe.aliases,
+  };
 
   const allowedDevOrigins = Array.isArray(config.allowedDevOrigins)
     ? config.allowedDevOrigins
     : [];
 
-  // Resolve serverActions.allowedOrigins from experimental config
+  // Resolve serverActions.allowedOrigins and bodySizeLimit from experimental config
   const experimental = config.experimental as Record<string, unknown> | undefined;
-  const serverActionsConfig = experimental?.serverActions as Record<string, unknown> | undefined;
-  const serverActionsAllowedOrigins = Array.isArray(serverActionsConfig?.allowedOrigins)
+  const serverActionsConfig = experimental?.serverActions as
+    | Record<string, unknown>
+    | undefined;
+  const serverActionsAllowedOrigins = Array.isArray(
+    serverActionsConfig?.allowedOrigins,
+  )
     ? (serverActionsConfig.allowedOrigins as string[])
     : [];
+  const serverActionsBodySizeLimit = parseBodySizeLimit(serverActionsConfig?.bodySizeLimit as string | number | undefined);
 
-  // Warn about unsupported options (skip webpack if we extracted MDX from it)
-  const unsupported = mdx ? [] : ["webpack"];
-  for (const key of unsupported) {
-    if (config[key] !== undefined) {
+  // Warn about unsupported webpack usage. We preserve alias injection and
+  // extract MDX settings, but all other webpack customization is still ignored.
+  if (config.webpack !== undefined) {
+    if (mdx || Object.keys(webpackProbe.aliases).length > 0) {
       console.warn(
-        `[vinext] next.config option "${key}" is not yet supported and will be ignored`,
+        '[vinext] next.config option "webpack" is only partially supported. ' +
+          "vinext preserves resolve.alias entries and MDX loader settings, but other webpack customization is ignored",
+      );
+    } else {
+      console.warn(
+        '[vinext] next.config option "webpack" is not yet supported and will be ignored',
       );
     }
   }
@@ -351,9 +435,80 @@ export async function resolveNextConfig(
     images: config.images,
     i18n,
     mdx,
+    aliases,
     allowedDevOrigins,
     serverActionsAllowedOrigins,
+    serverActionsBodySizeLimit,
   };
+}
+
+function normalizeAliasEntries(
+  aliases: Record<string, unknown> | undefined,
+  root: string,
+): Record<string, string> {
+  if (!aliases) return {};
+
+  const normalized: Record<string, string> = {};
+  for (const [key, value] of Object.entries(aliases)) {
+    if (typeof value !== "string") continue;
+    normalized[key] = path.isAbsolute(value) ? value : path.resolve(root, value);
+  }
+  return normalized;
+}
+
+function extractTurboAliases(
+  config: NextConfig,
+  root: string,
+): Record<string, string> {
+  const experimental = config.experimental as Record<string, unknown> | undefined;
+  const experimentalTurbo = experimental?.turbo as Record<string, unknown> | undefined;
+  const topLevelTurbopack = config.turbopack as Record<string, unknown> | undefined;
+
+  return {
+    ...normalizeAliasEntries(
+      experimentalTurbo?.resolveAlias as Record<string, unknown> | undefined,
+      root,
+    ),
+    ...normalizeAliasEntries(
+      topLevelTurbopack?.resolveAlias as Record<string, unknown> | undefined,
+      root,
+    ),
+  };
+}
+
+async function probeWebpackConfig(
+  config: NextConfig,
+  root: string,
+): Promise<{ aliases: Record<string, string>; mdx: MdxOptions | null }> {
+  if (typeof config.webpack !== "function") {
+    return { aliases: {}, mdx: null };
+  }
+
+  const mockModuleRules: any[] = [];
+  const mockConfig = {
+    context: root,
+    resolve: { alias: {} as Record<string, unknown> },
+    module: { rules: mockModuleRules },
+    plugins: [] as any[],
+  };
+  const mockOptions = {
+    defaultLoaders: { babel: { loader: "next-babel-loader" } },
+    isServer: false,
+    dev: false,
+    dir: root,
+  };
+
+  try {
+    const result = await (config.webpack as Function)(mockConfig, mockOptions);
+    const finalConfig = result ?? mockConfig;
+    const rules: any[] = finalConfig.module?.rules ?? mockModuleRules;
+    return {
+      aliases: normalizeAliasEntries(finalConfig.resolve?.alias, root),
+      mdx: extractMdxOptionsFromRules(rules),
+    };
+  } catch {
+    return { aliases: {}, mdx: null };
+  }
 }
 
 /**
@@ -364,39 +519,19 @@ export async function resolveNextConfig(
  * loader rule. The remark/rehype plugins are captured in that closure.
  * We probe the webpack function with a mock config to extract them.
  */
-export function extractMdxOptions(config: NextConfig): MdxOptions | null {
-  if (typeof config.webpack !== "function") return null;
+export async function extractMdxOptions(
+  config: NextConfig,
+  root: string = process.cwd(),
+): Promise<MdxOptions | null> {
+  return (await probeWebpackConfig(config, root)).mdx;
+}
 
-  // Build a mock webpack config object that @next/mdx's wrapper will mutate
-  const mockModuleRules: any[] = [];
-  const mockConfig = {
-    resolve: { alias: {} as Record<string, string> },
-    module: { rules: mockModuleRules },
-    plugins: [] as any[],
-  };
-  const mockOptions = {
-    defaultLoaders: { babel: { loader: "next-babel-loader" } },
-    isServer: false,
-    dev: false,
-    dir: "/mock",
-  };
-
-  try {
-    const result = (config.webpack as Function)(mockConfig, mockOptions);
-    // @next/mdx may return the config or mutate in place
-    const finalConfig = result ?? mockConfig;
-    const rules: any[] = finalConfig.module?.rules ?? mockModuleRules;
-
-    // Search through webpack rules for the MDX loader injected by @next/mdx
-    for (const rule of rules) {
-      const loaders = extractMdxLoaders(rule);
-      if (loaders) return loaders;
-    }
-  } catch {
-    // If the webpack function throws (e.g. expects real webpack internals),
-    // silently skip — we'll fall back to bare mdx() with no plugins.
+function extractMdxOptionsFromRules(rules: any[]): MdxOptions | null {
+  // Search through webpack rules for the MDX loader injected by @next/mdx
+  for (const rule of rules) {
+    const loaders = extractMdxLoaders(rule);
+    if (loaders) return loaders;
   }
-
   return null;
 }
 
@@ -437,18 +572,24 @@ function isMdxLoader(loaderPath: string): boolean {
   return (
     loaderPath.includes("mdx") &&
     (loaderPath.includes("@next") ||
-     loaderPath.includes("@mdx-js") ||
-     loaderPath.includes("mdx-js-loader") ||
-     loaderPath.includes("next-mdx"))
+      loaderPath.includes("@mdx-js") ||
+      loaderPath.includes("mdx-js-loader") ||
+      loaderPath.includes("next-mdx"))
   );
 }
 
 function extractPluginsFromOptions(opts: any): MdxOptions | null {
   if (!opts || typeof opts !== "object") return null;
 
-  const remarkPlugins = Array.isArray(opts.remarkPlugins) ? opts.remarkPlugins : undefined;
-  const rehypePlugins = Array.isArray(opts.rehypePlugins) ? opts.rehypePlugins : undefined;
-  const recmaPlugins = Array.isArray(opts.recmaPlugins) ? opts.recmaPlugins : undefined;
+  const remarkPlugins = Array.isArray(opts.remarkPlugins)
+    ? opts.remarkPlugins
+    : undefined;
+  const rehypePlugins = Array.isArray(opts.rehypePlugins)
+    ? opts.rehypePlugins
+    : undefined;
+  const recmaPlugins = Array.isArray(opts.recmaPlugins)
+    ? opts.recmaPlugins
+    : undefined;
 
   // Only return if at least one plugin array is non-empty
   if (

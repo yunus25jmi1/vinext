@@ -22,6 +22,7 @@ import {
   detectPackageManager,
   detectPackageManagerName,
   findInNodeModules,
+  ensureViteConfigCompatibility,
 } from "../packages/vinext/src/utils/project.js";
 import { computeLazyChunks } from "../packages/vinext/src/index.js";
 import { mergeHeaders } from "../packages/vinext/src/server/worker-utils.js";
@@ -404,7 +405,7 @@ describe("generatePagesRouterWorkerEntry", () => {
   it("generates valid TypeScript", () => {
     const content = generatePagesRouterWorkerEntry();
     expect(content).toContain("export default");
-    expect(content).toContain("async fetch(request: Request, env: Env)");
+    expect(content).toContain("async fetch(request: Request, env: Env, ctx: ExecutionContext)");
     expect(content).toContain("Promise<Response>");
   });
 
@@ -438,7 +439,7 @@ describe("generatePagesRouterWorkerEntry", () => {
   it("runs middleware before routing", () => {
     const content = generatePagesRouterWorkerEntry();
     // Middleware should appear before API route check
-    const middlewarePos = content.indexOf("runMiddleware(request)");
+    const middlewarePos = content.indexOf("runMiddleware(request, ctx)");
     const apiRoutePos = content.indexOf('resolvedPathname.startsWith("/api/")');
     expect(middlewarePos).toBeGreaterThan(-1);
     expect(apiRoutePos).toBeGreaterThan(-1);
@@ -603,7 +604,7 @@ describe("generatePagesRouterWorkerEntry", () => {
   it("builds reqCtx before middleware runs", () => {
     const content = generatePagesRouterWorkerEntry();
     const reqCtxPos = content.indexOf("requestContextFromRequest(request)");
-    const middlewarePos = content.indexOf("runMiddleware(request)");
+    const middlewarePos = content.indexOf("runMiddleware(request, ctx)");
     expect(reqCtxPos).toBeGreaterThan(-1);
     expect(middlewarePos).toBeGreaterThan(-1);
     expect(reqCtxPos).toBeLessThan(middlewarePos);
@@ -1986,5 +1987,139 @@ describe("findInNodeModules", () => {
 
     const result = findInNodeModules(appDir, "@cloudflare/vite-plugin");
     expect(result).toBe(path.join(appDir, "node_modules", "@cloudflare", "vite-plugin"));
+  });
+});
+
+// ─── ESM config compatibility (issue #184) ──────────────────────────────────
+//
+// Tests for ensureViteConfigCompatibility() — the wrapper in utils/project.ts
+// that renames CJS configs + adds type:module before Vite loads the config.
+//
+// The underlying ensureESModule() and renameCJSConfigs() are tested above.
+// These tests cover the wrapper's own guards and the integration of both
+// functions together.
+
+describe("ensureViteConfigCompatibility — issue #184", () => {
+  it("renames CJS configs and adds type:module when vite.config.ts exists", () => {
+    writeFile(
+      tmpDir,
+      "package.json",
+      JSON.stringify({ name: "web", version: "1.0.0" }),
+    );
+    writeFile(
+      tmpDir,
+      "vite.config.ts",
+      'import { cloudflare } from "@cloudflare/vite-plugin";\nexport default { plugins: [cloudflare()] };',
+    );
+    writeFile(
+      tmpDir,
+      "postcss.config.js",
+      "module.exports = { plugins: { tailwindcss: {}, autoprefixer: {} } };",
+    );
+
+    const result = ensureViteConfigCompatibility(tmpDir);
+
+    expect(result).not.toBeNull();
+    expect(result!.addedTypeModule).toBe(true);
+    expect(result!.renamed).toEqual([["postcss.config.js", "postcss.config.cjs"]]);
+
+    const pkg = JSON.parse(fs.readFileSync(path.join(tmpDir, "package.json"), "utf-8"));
+    expect(pkg.type).toBe("module");
+    expect(fs.existsSync(path.join(tmpDir, "postcss.config.cjs"))).toBe(true);
+    expect(fs.existsSync(path.join(tmpDir, "postcss.config.js"))).toBe(false);
+  });
+
+  it("returns null when no vite.config exists", () => {
+    writeFile(
+      tmpDir,
+      "package.json",
+      JSON.stringify({ name: "web", version: "1.0.0" }),
+    );
+
+    const result = ensureViteConfigCompatibility(tmpDir);
+    expect(result).toBeNull();
+
+    // package.json should not be modified
+    const pkg = JSON.parse(fs.readFileSync(path.join(tmpDir, "package.json"), "utf-8"));
+    expect(pkg.type).toBeUndefined();
+  });
+
+  it("returns null when package.json already has type:module", () => {
+    writeFile(
+      tmpDir,
+      "package.json",
+      JSON.stringify({ name: "web", type: "module" }),
+    );
+    writeFile(tmpDir, "vite.config.ts", "export default {};");
+
+    const result = ensureViteConfigCompatibility(tmpDir);
+    expect(result).toBeNull();
+  });
+
+  it("does not override explicit 'type': 'commonjs'", () => {
+    writeFile(
+      tmpDir,
+      "package.json",
+      JSON.stringify({ name: "web", type: "commonjs" }),
+    );
+    writeFile(tmpDir, "vite.config.ts", "export default {};");
+    writeFile(tmpDir, "postcss.config.js", "module.exports = {};");
+
+    const result = ensureViteConfigCompatibility(tmpDir);
+    expect(result).toBeNull();
+
+    // package.json should not be modified
+    const pkg = JSON.parse(fs.readFileSync(path.join(tmpDir, "package.json"), "utf-8"));
+    expect(pkg.type).toBe("commonjs");
+
+    // CJS configs should not be renamed either
+    expect(fs.existsSync(path.join(tmpDir, "postcss.config.js"))).toBe(true);
+  });
+
+  it("returns null when no package.json exists", () => {
+    writeFile(tmpDir, "vite.config.ts", "export default {};");
+
+    const result = ensureViteConfigCompatibility(tmpDir);
+    expect(result).toBeNull();
+  });
+
+  it("detects vite.config.js (not only .ts)", () => {
+    writeFile(
+      tmpDir,
+      "package.json",
+      JSON.stringify({ name: "web", version: "1.0.0" }),
+    );
+    writeFile(tmpDir, "vite.config.js", "export default {};");
+
+    const result = ensureViteConfigCompatibility(tmpDir);
+
+    expect(result).not.toBeNull();
+    expect(result!.addedTypeModule).toBe(true);
+
+    const pkg = JSON.parse(fs.readFileSync(path.join(tmpDir, "package.json"), "utf-8"));
+    expect(pkg.type).toBe("module");
+  });
+
+  it("handles a workspaces monorepo: only updates the leaf package.json", () => {
+    const webDir = path.join(tmpDir, "apps", "web");
+    fs.mkdirSync(webDir, { recursive: true });
+
+    // Root package.json (CJS)
+    writeFile(tmpDir, "package.json", JSON.stringify({ name: "monorepo", workspaces: ["apps/*"] }));
+    // Workspace package.json (no type:module)
+    writeFile(webDir, "package.json", JSON.stringify({ name: "web", version: "1.0.0" }));
+    writeFile(webDir, "vite.config.ts", "export default {};");
+
+    const result = ensureViteConfigCompatibility(webDir);
+
+    expect(result).not.toBeNull();
+    expect(result!.addedTypeModule).toBe(true);
+
+    const rootPkg = JSON.parse(fs.readFileSync(path.join(tmpDir, "package.json"), "utf-8"));
+    const webPkg = JSON.parse(fs.readFileSync(path.join(webDir, "package.json"), "utf-8"));
+
+    // Only the workspace package should be modified
+    expect(webPkg.type).toBe("module");
+    expect(rootPkg.type).toBeUndefined();
   });
 });
