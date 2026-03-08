@@ -134,7 +134,7 @@ describe("App Router entry templates", () => {
       "",    // no basePath
       false, // no trailingSlash
     );
-    expect(code).toMatchSnapshot();
+    expect(stabilize(code)).toMatchSnapshot();
   });
 
   it("generateRscEntry snapshot (with middleware)", () => {
@@ -147,7 +147,7 @@ describe("App Router entry templates", () => {
       "",
       false,
     );
-    expect(code).toMatchSnapshot();
+    expect(stabilize(code)).toMatchSnapshot();
   });
 
   it("generateRscEntry snapshot (with instrumentation)", () => {
@@ -162,7 +162,7 @@ describe("App Router entry templates", () => {
       undefined,
       "/tmp/test/instrumentation.ts",
     );
-    expect(code).toMatchSnapshot();
+    expect(stabilize(code)).toMatchSnapshot();
   });
 
   it("generateRscEntry snapshot (with global error)", () => {
@@ -175,7 +175,7 @@ describe("App Router entry templates", () => {
       "",
       false,
     );
-    expect(code).toMatchSnapshot();
+    expect(stabilize(code)).toMatchSnapshot();
   });
 
   it("generateRscEntry snapshot (with config)", () => {
@@ -209,7 +209,7 @@ describe("App Router entry templates", () => {
       true,
       config,
     );
-    expect(code).toMatchSnapshot();
+    expect(stabilize(code)).toMatchSnapshot();
   });
 
   it("generateRscEntry snapshot (with metadata routes)", () => {
@@ -231,17 +231,17 @@ describe("App Router entry templates", () => {
       "",
       false,
     );
-    expect(code).toMatchSnapshot();
+    expect(stabilize(code)).toMatchSnapshot();
   });
 
   it("generateSsrEntry snapshot", () => {
     const code = generateSsrEntry();
-    expect(code).toMatchSnapshot();
+    expect(stabilize(code)).toMatchSnapshot();
   });
 
   it("generateBrowserEntry snapshot", () => {
     const code = generateBrowserEntry();
-    expect(code).toMatchSnapshot();
+    expect(stabilize(code)).toMatchSnapshot();
   });
 });
 
