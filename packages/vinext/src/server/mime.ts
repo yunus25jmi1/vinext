@@ -35,6 +35,7 @@ export const MIME_TYPES: Record<string, string> = {
   webm: "video/webm",
   mp3: "audio/mpeg",
   ogg: "audio/ogg",
+  wasm: "application/wasm",
 };
 
 /**

@@ -1920,6 +1920,8 @@ async function _handleRequest(request, __reqCtx, _mwCtx) {
       const __afterExtname = __nodePath.extname(cleanPathname);
       if (__afterExtname && ${JSON.stringify(publicDir)} !== null) {
         const __afterPublicRoot = ${JSON.stringify(publicDir)};
+        // "." + cleanPathname works because rewrite destinations always start with "/";
+        // the traversal guard below catches any malformed path regardless.
         const __afterPublicFile = __nodePath.resolve(__afterPublicRoot, "." + cleanPathname);
         if (__afterPublicFile.startsWith(__afterPublicRoot + __nodePath.sep)) {
           try {
@@ -1931,7 +1933,7 @@ async function _handleRequest(request, __reqCtx, _mwCtx) {
               setNavigationContext(null);
               return new Response(__afterContent, { status: 200, headers: { "Content-Type": __mimeTypes[__afterExt] ?? "application/octet-stream" } });
             }
-          } catch { /* file doesn't exist or not readable */ }
+          } catch (__e) { if (__e?.code !== 'ENOENT') console.warn('[vinext] static file check failed:', __e); }
         }
       }
     }
@@ -1953,6 +1955,7 @@ async function _handleRequest(request, __reqCtx, _mwCtx) {
       const __fbExtname = __nodePath.extname(cleanPathname);
       if (__fbExtname && ${JSON.stringify(publicDir)} !== null) {
         const __fbPublicRoot = ${JSON.stringify(publicDir)};
+        // "." + cleanPathname: see afterFiles comment above — leading "/" is assumed.
         const __fbPublicFile = __nodePath.resolve(__fbPublicRoot, "." + cleanPathname);
         if (__fbPublicFile.startsWith(__fbPublicRoot + __nodePath.sep)) {
           try {
@@ -1964,7 +1967,7 @@ async function _handleRequest(request, __reqCtx, _mwCtx) {
               setNavigationContext(null);
               return new Response(__fbContent, { status: 200, headers: { "Content-Type": __mimeTypes[__fbExt] ?? "application/octet-stream" } });
             }
-          } catch { /* file doesn't exist or not readable */ }
+          } catch (__e) { if (__e?.code !== 'ENOENT') console.warn('[vinext] static file check failed:', __e); }
         }
       }
       match = matchRoute(cleanPathname, routes);

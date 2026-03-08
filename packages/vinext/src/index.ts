@@ -3066,6 +3066,8 @@ hydrate();
 
               const routes = await pagesRouter(pagesDir, nextConfig?.pageExtensions, fileMatcher);
 
+              const resolvedPublicDir = path.resolve(root, "public");
+
               // Apply afterFiles rewrites — these run after initial route matching
               // If beforeFiles already rewrote the URL, afterFiles still run on the
               // *resolved* pathname. Next.js applies these when route matching succeeds
@@ -3088,7 +3090,7 @@ hydrate();
                   // (which would miss it and SSR would return 404).
                   const afterFilesPathname = afterRewrite.split("?")[0];
                   if (path.extname(afterFilesPathname)) {
-                    const resolvedPublicDir = path.resolve(root, "public");
+                    // "." + afterFilesPathname works because rewrite destinations always start with "/"
                     const publicFilePath = path.resolve(resolvedPublicDir, "." + afterFilesPathname);
                     if (publicFilePath.startsWith(resolvedPublicDir + path.sep) && fs.existsSync(publicFilePath) && fs.statSync(publicFilePath).isFile()) {
                       const content = fs.readFileSync(publicFilePath);
@@ -3133,7 +3135,7 @@ hydrate();
                   // Check if fallback targets a static file in public/
                   const fallbackPathname = fallbackRewrite.split("?")[0];
                   if (path.extname(fallbackPathname)) {
-                    const resolvedPublicDir = path.resolve(root, "public");
+                    // "." + fallbackPathname: see afterFiles comment above — leading "/" is assumed
                     const publicFilePath = path.resolve(resolvedPublicDir, "." + fallbackPathname);
                     if (publicFilePath.startsWith(resolvedPublicDir + path.sep) && fs.existsSync(publicFilePath) && fs.statSync(publicFilePath).isFile()) {
                       const content = fs.readFileSync(publicFilePath);
