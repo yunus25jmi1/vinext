@@ -31,6 +31,8 @@ export interface AppRouterConfig {
   allowedOrigins?: string[];
   /** Extra origins allowed for dev server access (from allowedDevOrigins). */
   allowedDevOrigins?: string[];
+  /** Body size limit for server actions in bytes (from experimental.serverActions.bodySizeLimit). */
+  bodySizeLimit?: number;
 }
 
 /**
@@ -57,6 +59,7 @@ export function generateRscEntry(
   const rewrites = config?.rewrites ?? { beforeFiles: [], afterFiles: [], fallback: [] };
   const headers = config?.headers ?? [];
   const allowedOrigins = config?.allowedOrigins ?? [];
+  const bodySizeLimit = config?.bodySizeLimit ?? 1 * 1024 * 1024;
   // Build import map for all page and layout files
   const imports: string[] = [];
   const importMap: Map<string, string> = new Map();
@@ -620,6 +623,7 @@ async function renderErrorBoundaryPage(route, error, isRscRequest, request, matc
   // Resolve the error boundary component: leaf error.tsx first, then walk per-layout
   // errors from innermost to outermost (matching ancestor inheritance), then global-error.tsx.
   let ErrorComponent = route?.error?.default ?? null;
+  let _isGlobalError = false;
   if (!ErrorComponent && route?.errors) {
     for (let i = route.errors.length - 1; i >= 0; i--) {
       if (route.errors[i]?.default) {
@@ -628,7 +632,12 @@ async function renderErrorBoundaryPage(route, error, isRscRequest, request, matc
       }
     }
   }
-  ErrorComponent = ErrorComponent${globalErrorVar ? ` ?? ${globalErrorVar}?.default` : ""};
+  ${globalErrorVar ? `
+  if (!ErrorComponent) {
+    ErrorComponent = ${globalErrorVar}?.default ?? null;
+    _isGlobalError = !!ErrorComponent;
+  }
+  ` : ""}
   if (!ErrorComponent) return null;
 
   const rawError = error instanceof Error ? error : new Error(String(error));
@@ -643,40 +652,59 @@ async function renderErrorBoundaryPage(route, error, isRscRequest, request, matc
   let element = createElement(ErrorComponent, {
     error: errorObj,
   });
-  const layouts = route?.layouts ?? rootLayouts;
-  if (isRscRequest) {
-    // For RSC requests (client-side navigation), wrap with the same component
-    // wrappers that buildPageElement() uses (LayoutSegmentProvider, GlobalErrorBoundary).
-    // This ensures React can reconcile the tree without destroying the DOM.
-    // Same rationale as renderHTTPAccessFallbackPage — see comment there.
-    const _errTreePositions = route?.layoutTreePositions;
-    const _errRouteSegs = route?.routeSegments || [];
-    const _errParams = matchedParams ?? route?.params ?? {};
-    const _asyncErrParams = makeThenableParams(_errParams);
-    for (let i = layouts.length - 1; i >= 0; i--) {
-      const LayoutComponent = layouts[i]?.default;
-      if (LayoutComponent) {
-        element = createElement(LayoutComponent, { children: element, params: _asyncErrParams });
-        const _etp = _errTreePositions ? _errTreePositions[i] : 0;
-        const _ecs = __resolveChildSegments(_errRouteSegs, _etp, _errParams);
-        element = createElement(LayoutSegmentProvider, { childSegments: _ecs }, element);
+
+  // global-error.tsx provides its own <html> and <body> (it replaces the root
+  // layout). Skip layout wrapping when rendering it to avoid double <html> tags.
+  if (!_isGlobalError) {
+    const layouts = route?.layouts ?? rootLayouts;
+    if (isRscRequest) {
+      // For RSC requests (client-side navigation), wrap with the same component
+      // wrappers that buildPageElement() uses (LayoutSegmentProvider, GlobalErrorBoundary).
+      // This ensures React can reconcile the tree without destroying the DOM.
+      // Same rationale as renderHTTPAccessFallbackPage — see comment there.
+      const _errTreePositions = route?.layoutTreePositions;
+      const _errRouteSegs = route?.routeSegments || [];
+      const _errParams = matchedParams ?? route?.params ?? {};
+      const _asyncErrParams = makeThenableParams(_errParams);
+      for (let i = layouts.length - 1; i >= 0; i--) {
+        const LayoutComponent = layouts[i]?.default;
+        if (LayoutComponent) {
+          element = createElement(LayoutComponent, { children: element, params: _asyncErrParams });
+          const _etp = _errTreePositions ? _errTreePositions[i] : 0;
+          const _ecs = __resolveChildSegments(_errRouteSegs, _etp, _errParams);
+          element = createElement(LayoutSegmentProvider, { childSegments: _ecs }, element);
+        }
+      }
+      ${globalErrorVar ? `
+      const _ErrGlobalComponent = ${globalErrorVar}.default;
+      if (_ErrGlobalComponent) {
+        element = createElement(ErrorBoundary, {
+          fallback: _ErrGlobalComponent,
+          children: element,
+        });
+      }
+      ` : ""}
+    } else {
+      // For HTML (full page load) responses, wrap with layouts only.
+      const _errParamsHtml = matchedParams ?? route?.params ?? {};
+      const _asyncErrParamsHtml = makeThenableParams(_errParamsHtml);
+      for (let i = layouts.length - 1; i >= 0; i--) {
+        const LayoutComponent = layouts[i]?.default;
+        if (LayoutComponent) {
+          element = createElement(LayoutComponent, { children: element, params: _asyncErrParamsHtml });
+        }
       }
     }
-    ${globalErrorVar ? `
-    const _ErrGlobalComponent = ${globalErrorVar}.default;
-    if (_ErrGlobalComponent) {
-      element = createElement(ErrorBoundary, {
-        fallback: _ErrGlobalComponent,
-        children: element,
-      });
-    }
-    ` : ""}
-    const _pathname = new URL(request.url).pathname;
-    const onRenderError = createRscOnErrorHandler(
-      request,
-      _pathname,
-      route?.pattern ?? _pathname,
-    );
+  }
+
+  const _pathname = new URL(request.url).pathname;
+  const onRenderError = createRscOnErrorHandler(
+    request,
+    _pathname,
+    route?.pattern ?? _pathname,
+  );
+
+  if (isRscRequest) {
     const rscStream = renderToReadableStream(element, { onError: onRenderError });
     // Do NOT clear context here — the RSC stream is consumed lazily by the client.
     // Clearing context now would cause async server components (e.g. NextIntlClientProviderServer)
@@ -689,21 +717,8 @@ async function renderErrorBoundaryPage(route, error, isRscRequest, request, matc
       headers: { "Content-Type": "text/x-component; charset=utf-8", "Vary": "RSC, Accept" },
     });
   }
-  // For HTML (full page load) responses, wrap with layouts only.
-  const _errParamsHtml = matchedParams ?? route?.params ?? {};
-  const _asyncErrParamsHtml = makeThenableParams(_errParamsHtml);
-  for (let i = layouts.length - 1; i >= 0; i--) {
-    const LayoutComponent = layouts[i]?.default;
-    if (LayoutComponent) {
-      element = createElement(LayoutComponent, { children: element, params: _asyncErrParamsHtml });
-    }
-  }
-  const _pathname = new URL(request.url).pathname;
-  const onRenderError = createRscOnErrorHandler(
-    request,
-    _pathname,
-    route?.pattern ?? _pathname,
-  );
+
+  // HTML (full page load) response — render through RSC → SSR pipeline
   const rscStream = renderToReadableStream(element, { onError: onRenderError });
   // Collect font data from RSC environment so error pages include font styles
   const fontData = {
@@ -1022,7 +1037,14 @@ async function buildPageElement(route, params, opts, searchParams) {
   }
 
   // Wrap with global error boundary if app/global-error.tsx exists.
-  // This catches errors in the root layout itself.
+  // This must be present in both HTML and RSC paths so the component tree
+  // structure matches — otherwise React reconciliation on client-side navigation
+  // would see a mismatched tree and destroy/recreate the DOM.
+  //
+  // For RSC requests (client-side nav), this provides error recovery on the client.
+  // For HTML requests (initial page load), the ErrorBoundary catches during SSR
+  // but produces double <html>/<body> (root layout + global-error). The request
+  // handler detects this via the rscOnError flag and re-renders without layouts.
   ${globalErrorVar ? `
   const GlobalErrorComponent = ${globalErrorVar}.default;
   if (GlobalErrorComponent) {
@@ -1271,12 +1293,13 @@ function __isExternalUrl(url) {
 }
 
 /**
- * Maximum server-action request body size (1 MB).
- * Matches the Next.js default for serverActions.bodySizeLimit.
+ * Maximum server-action request body size.
+ * Configurable via experimental.serverActions.bodySizeLimit in next.config.
+ * Defaults to 1MB, matching the Next.js default.
  * @see https://nextjs.org/docs/app/api-reference/config/next-config-js/serverActions#bodysizelimit
  * Prevents unbounded request body buffering.
  */
-var __MAX_ACTION_BODY_SIZE = 1 * 1024 * 1024;
+var __MAX_ACTION_BODY_SIZE = ${JSON.stringify(bodySizeLimit)};
 
 /**
  * Read a request body as text with a size limit.
@@ -2344,8 +2367,18 @@ async function _handleRequest(request, __reqCtx, _mwCtx) {
   // Mark end of compile phase: route matching, middleware, tree building are done.
   if (process.env.NODE_ENV !== "production") __compileEnd = performance.now();
 
-  // Render to RSC stream
-  const onRenderError = createRscOnErrorHandler(request, cleanPathname, route.pattern);
+  // Render to RSC stream.
+  // Track non-navigation RSC errors so we can detect when the in-tree global
+  // ErrorBoundary catches during SSR (producing double <html>/<body>) and
+  // re-render with renderErrorBoundaryPage (which skips layouts for global-error).
+  let _rscErrorForRerender = null;
+  const _baseOnError = createRscOnErrorHandler(request, cleanPathname, route.pattern);
+  const onRenderError = function(error, requestInfo, errorContext) {
+    if (!(error && typeof error === "object" && "digest" in error)) {
+      _rscErrorForRerender = error;
+    }
+    return _baseOnError(error, requestInfo, errorContext);
+  };
   const rscStream = renderToReadableStream(element, { onError: onRenderError });
 
   if (isRscRequest) {
@@ -2449,6 +2482,20 @@ async function _handleRequest(request, __reqCtx, _mwCtx) {
     if (errorBoundaryResp) return errorBoundaryResp;
     throw ssrErr;
   }
+
+  // If an RSC error was caught by the in-tree global ErrorBoundary during SSR,
+  // the HTML output has double <html>/<body> (root layout + global-error.tsx).
+  // Discard it and re-render using renderErrorBoundaryPage which skips layouts
+  // when the error falls through to global-error.tsx.
+  ${globalErrorVar ? `
+  if (_rscErrorForRerender && !isRscRequest) {
+    const _hasLocalBoundary = !!(route?.error?.default) || !!(route?.errors && route.errors.some(function(e) { return e?.default; }));
+    if (!_hasLocalBoundary) {
+      const cleanResp = await renderErrorBoundaryPage(route, _rscErrorForRerender, false, request, params);
+      if (cleanResp) return cleanResp;
+    }
+  }
+  ` : ""}
 
   // Check for draftMode Set-Cookie header (from draftMode().enable()/disable())
   const draftCookie = getDraftModeCookieHeader();
@@ -2875,7 +2922,16 @@ export async function handleSsr(rscStream, navContext, fontData) {
     // Params are embedded eagerly in <head> so they're available before client
     // hydration starts, avoiding the need for polling on the client.
     const paramsScript = '<script>self.__VINEXT_RSC_PARAMS__=' + safeJsonStringify(navContext?.params || {}) + '</script>';
-    const injectHTML = paramsScript + modulePreloadHTML + insertedHTML + fontHTML;
+    // Embed the initial navigation context (pathname + searchParams) so the
+    // browser useSyncExternalStore getServerSnapshot can return the correct
+    // value during hydration. Without this, getServerSnapshot returns "/" and
+    // React detects a mismatch against the SSR-rendered HTML.
+     // Serialise searchParams as an array of [key, value] pairs to preserve
+     // duplicate keys (e.g. ?tag=a&tag=b). Object.fromEntries() would keep
+     // only the last value, causing a hydration mismatch for multi-value params.
+     const __navPayload = { pathname: navContext?.pathname ?? '/', searchParams: navContext?.searchParams ? [...navContext.searchParams.entries()] : [] };
+    const navScript = '<script>self.__VINEXT_RSC_NAV__=' + safeJsonStringify(__navPayload) + '</script>';
+    const injectHTML = paramsScript + navScript + modulePreloadHTML + insertedHTML + fontHTML;
 
     // Inject the collected HTML before </head> and progressively embed RSC
     // chunks as script tags throughout the HTML body stream.
@@ -3033,7 +3089,7 @@ import {
 } from "@vitejs/plugin-rsc/browser";
 import { hydrateRoot } from "react-dom/client";
 import { flushSync } from "react-dom";
-import { setClientParams, toRscUrl, getPrefetchCache, getPrefetchedUrls, PREFETCH_CACHE_TTL } from "next/navigation";
+import { setClientParams, setNavigationContext, toRscUrl, getPrefetchCache, getPrefetchedUrls, PREFETCH_CACHE_TTL } from "next/navigation";
 
 let reactRoot;
 
@@ -3202,12 +3258,22 @@ async function main() {
       if (embedData.params) {
         setClientParams(embedData.params);
       }
+      // Legacy format may include nav context for hydration snapshot consistency.
+      if (embedData.nav) {
+        setNavigationContext({ pathname: embedData.nav.pathname, searchParams: new URLSearchParams(embedData.nav.searchParams || {}), params: embedData.params || {} });
+      }
       rscStream = chunksToReadableStream(embedData.rsc);
     } else {
       // Progressive format: chunks arrive incrementally via script tags.
       // Params are embedded in <head> so they're always available by this point.
       if (self.__VINEXT_RSC_PARAMS__) {
         setClientParams(self.__VINEXT_RSC_PARAMS__);
+      }
+      // Restore the server navigation context so useSyncExternalStore getServerSnapshot
+      // matches what was rendered on the server, preventing hydration mismatches.
+      if (self.__VINEXT_RSC_NAV__) {
+        const __nav = self.__VINEXT_RSC_NAV__;
+        setNavigationContext({ pathname: __nav.pathname, searchParams: new URLSearchParams(__nav.searchParams), params: self.__VINEXT_RSC_PARAMS__ || {} });
       }
       rscStream = createProgressiveRscStream();
     }
@@ -3220,6 +3286,8 @@ async function main() {
     if (paramsHeader) {
       try { setClientParams(JSON.parse(paramsHeader)); } catch (_e) { /* ignore */ }
     }
+    // Set nav context from current URL for hydration snapshot consistency.
+    setNavigationContext({ pathname: window.location.pathname, searchParams: new URLSearchParams(window.location.search), params: self.__VINEXT_RSC_PARAMS__ || {} });
 
     rscStream = rscResponse.body;
   }
