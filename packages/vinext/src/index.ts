@@ -1091,8 +1091,6 @@ function parseCookieLocaleFromHeader(cookieHeader) {
   return null;
 }
 
-// parseCookies is imported from config-matchers.ts (see import statements above)
-
 // Lightweight req/res facade for getServerSideProps and API routes.
 // Next.js pages expect ctx.req/ctx.res with Node-like shapes.
 function createReqRes(request, url, query, body) {
@@ -3852,8 +3850,6 @@ function getNextPublicEnvDefines(): Record<string, string> {
 // which uses a single-pass tokenizer (fixing the chained .replace()
 // divergence that CodeQL flagged as incomplete sanitization).
 export { matchConfigPattern } from "./config/config-matchers.js";
-
-// sanitizeDestination is imported from config-matchers.ts
 
 /**
  * Strip server-only data-fetching exports (getServerSideProps,
