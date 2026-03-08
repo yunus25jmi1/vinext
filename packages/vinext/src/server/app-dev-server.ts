@@ -1259,10 +1259,8 @@ async function _handleRequest(request, __reqCtx, _mwCtx) {
   ` : ""}
 
   // Trailing slash normalization (redirect to canonical form)
-  {
-    const __tsRedirect = normalizeTrailingSlash(pathname, __basePath, __trailingSlash, url.search);
-    if (__tsRedirect) return __tsRedirect;
-  }
+  const __tsRedirect = normalizeTrailingSlash(pathname, __basePath, __trailingSlash, url.search);
+  if (__tsRedirect) return __tsRedirect;
 
   // ── Apply redirects from next.config.js ───────────────────────────────
   if (__configRedirects.length) {

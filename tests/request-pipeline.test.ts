@@ -94,6 +94,12 @@ describe("normalizeTrailingSlash", () => {
     expect(normalizeTrailingSlash("/about/", "", true, "")).toBeNull();
     expect(normalizeTrailingSlash("/about", "", false, "")).toBeNull();
   });
+
+  it("strips multiple trailing slashes when trailingSlash is false", () => {
+    const res = normalizeTrailingSlash("/about///", "", false, "");
+    expect(res).not.toBeNull();
+    expect(res!.headers.get("Location")).toBe("/about");
+  });
 });
 
 // ── validateCsrfOrigin ──────────────────────────────────────────────────
