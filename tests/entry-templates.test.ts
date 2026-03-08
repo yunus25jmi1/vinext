@@ -71,6 +71,25 @@ const minimalAppRoutes: AppRoute[] = [
     isDynamic: false,
     params: [],
   },
+  {
+    pattern: "/blog/:slug",
+    pagePath: "/tmp/test/app/blog/[slug]/page.tsx",
+    routePath: null,
+    layouts: ["/tmp/test/app/layout.tsx", "/tmp/test/app/blog/[slug]/layout.tsx"],
+    templates: [],
+    parallelSlots: [],
+    loadingPath: null,
+    errorPath: null,
+    layoutErrorPaths: [null, null],
+    notFoundPath: null,
+    notFoundPaths: [null, null],
+    forbiddenPath: null,
+    unauthorizedPath: null,
+    routeSegments: ["blog", ":slug"],
+    layoutTreePositions: [0, 1],
+    isDynamic: true,
+    params: ["slug"],
+  },
 ];
 
 // ── Pages Router fixture ──────────────────────────────────────────────
@@ -122,6 +141,19 @@ describe("App Router entry templates", () => {
       false,
       undefined,
       "/tmp/test/instrumentation.ts",
+    );
+    expect(code).toMatchSnapshot();
+  });
+
+  it("generateRscEntry snapshot (with global error)", () => {
+    const code = generateRscEntry(
+      "/tmp/test/app",
+      minimalAppRoutes,
+      null,
+      [],
+      "/tmp/test/app/global-error.tsx",
+      "",
+      false,
     );
     expect(code).toMatchSnapshot();
   });
