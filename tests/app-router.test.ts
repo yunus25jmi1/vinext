@@ -2190,8 +2190,8 @@ describe("App Router next.config.js features (generateRscEntry)", () => {
     // When root is provided, the generated code should contain that public path
     // so it can serve .html files from public/ when a rewrite produces a .html path.
     const code = generateRscEntry("/tmp/test/app", minimalRoutes, null, [], null, "", false, {}, null, "/tmp/test");
-    // path.join uses OS separators; the generated code embeds via JSON.stringify
-    const expectedPublicDir = path.join("/tmp/test", "public");
+    // path.resolve produces a fully normalized absolute path; the generated code embeds via JSON.stringify
+    const expectedPublicDir = path.resolve("/tmp/test", "public");
     expect(code).toContain(JSON.stringify(expectedPublicDir));
     // __publicDir should be hoisted to module scope
     expect(code).toContain("const __publicDir = " + JSON.stringify(expectedPublicDir));

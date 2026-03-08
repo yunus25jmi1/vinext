@@ -67,7 +67,7 @@ export function generateRscEntry(
   // appDir is something like /project/app or /project/src/app; root is the Vite root.
   // We need `root` for correctness — path.dirname(appDir) is wrong for src/app layouts
   // (e.g. /project/src/public instead of /project/public).
-  const publicDir = root ? path.join(root, "public") : null;
+  const publicDir = root ? path.resolve(root, "public") : null;
   // Build import map for all page and layout files
   const imports: string[] = [];
   const importMap: Map<string, string> = new Map();
