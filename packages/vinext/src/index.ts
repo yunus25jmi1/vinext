@@ -5,6 +5,7 @@ import { appRouter, invalidateAppRouteCache } from "./routing/app-router.js";
 import { createValidFileMatcher } from "./routing/file-matcher.js";
 import { createSSRHandler } from "./server/dev-server.js";
 import { handleApiRoute } from "./server/api-handler.js";
+import { createDirectRunner } from "./server/dev-module-runner.js";
 import {
   generateRscEntry,
   generateSsrEntry,
@@ -678,10 +679,37 @@ export default function vinext(options: VinextOptions = {}): PluginOption[] {
       },
     });
 
+    // Generate instrumentation code if instrumentation.ts exists.
+    // For production (Cloudflare Workers), instrumentation.ts is bundled into the
+    // Worker and register() is called as a top-level await at module evaluation time —
+    // before any request is handled. This mirrors App Router behavior (generateRscEntry)
+    // and matches Next.js semantics: register() runs once on startup in the process
+    // that handles requests.
+    //
+    // The onRequestError handler is stored on globalThis so it is visible across
+    // all code within the Worker (same global scope).
+    const instrumentationImportCode = instrumentationPath
+      ? `import * as _instrumentation from ${JSON.stringify(instrumentationPath.replace(/\\/g, "/"))};`
+      : "";
+
+    const instrumentationInitCode = instrumentationPath
+      ? `// Run instrumentation register() once at module evaluation time — before any
+// requests are handled. Matches Next.js semantics: register() is called once
+// on startup in the process that handles requests.
+if (typeof _instrumentation.register === "function") {
+  await _instrumentation.register();
+}
+// Store the onRequestError handler on globalThis so it is visible to all
+// code within the Worker (same global scope).
+if (typeof _instrumentation.onRequestError === "function") {
+  globalThis.__VINEXT_onRequestErrorHandler__ = _instrumentation.onRequestError;
+}`
+      : "";
+
     // Generate middleware code if middleware.ts exists
     const middlewareImportCode = middlewarePath
       ? `import * as middlewareModule from ${JSON.stringify(middlewarePath.replace(/\\/g, "/"))};
-import { NextRequest } from "next/server";`
+import { NextRequest, NextFetchEvent } from "next/server";`
       : "";
 
     // The matcher config is read from the middleware module at import time.
@@ -693,7 +721,7 @@ ${generateNormalizePathCode("es5")}
 ${generateSafeRegExpCode("es5")}
 ${generateMiddlewareMatcherCode("es5")}
 
-export async function runMiddleware(request) {
+export async function runMiddleware(request, ctx) {
   var isProxy = ${middlewarePath ? JSON.stringify(isProxyFile(middlewarePath)) : "false"};
   var middlewareFn = isProxy
     ? (middlewareModule.proxy ?? middlewareModule.default)
@@ -727,12 +755,14 @@ export async function runMiddleware(request) {
     mwRequest = new Request(mwUrl, request);
   }
   var nextRequest = mwRequest instanceof NextRequest ? mwRequest : new NextRequest(mwRequest);
+  var fetchEvent = new NextFetchEvent({ page: normalizedPathname });
   var response;
-  try { response = await middlewareFn(nextRequest); }
+  try { response = await middlewareFn(nextRequest, fetchEvent); }
   catch (e) {
     console.error("[vinext] Middleware error:", e);
     return { continue: false, response: new Response("Internal Server Error", { status: 500 }) };
   }
+  if (ctx && typeof ctx.waitUntil === "function") { ctx.waitUntil(fetchEvent.drainWaitUntil()); } else { fetchEvent.drainWaitUntil(); }
 
   if (!response) return { continue: true };
 
@@ -792,7 +822,10 @@ import { safeJsonStringify } from "vinext/html";
 import { getSSRFontLinks as _getSSRFontLinks, getSSRFontStyles as _getSSRFontStylesGoogle, getSSRFontPreloads as _getSSRFontPreloadsGoogle } from "next/font/google";
 import { getSSRFontStyles as _getSSRFontStylesLocal, getSSRFontPreloads as _getSSRFontPreloadsLocal } from "next/font/local";
 import { parseCookies } from ${JSON.stringify(path.resolve(__dirname, "config/config-matchers.js").replace(/\\/g, "/"))};
+${instrumentationImportCode}
 ${middlewareImportCode}
+
+${instrumentationInitCode}
 
 // i18n config (embedded at build time)
 const i18nConfig = ${i18nConfigJson};
@@ -1798,7 +1831,7 @@ hydrate();
         // Load next.config.js if present (always from project root, not src/)
         const phase = env?.command === "build" ? PHASE_PRODUCTION_BUILD : PHASE_DEVELOPMENT_SERVER;
         const rawConfig = await loadNextConfig(root, phase);
-        nextConfig = await resolveNextConfig(rawConfig);
+        nextConfig = await resolveNextConfig(rawConfig, root);
         fileMatcher = createValidFileMatcher(nextConfig.pageExtensions);
 
         // Merge env from next.config.js with NEXT_PUBLIC_* env vars
@@ -1855,6 +1888,7 @@ hydrate();
         // Build the shim alias map — used by both resolve.alias and resolveId
         // (resolveId handles .js extension variants for libraries like nuqs)
         nextShimMap = {
+          ...nextConfig.aliases,
           "next/link": path.join(shimsDir, "link"),
           "next/head": path.join(shimsDir, "head"),
           "next/router": path.join(shimsDir, "router"),
@@ -2052,6 +2086,8 @@ hydrate();
           //   Any user-provided `ssr.noExternal` is intentionally superseded
           //   by this setting; only `ssr.external` entries escape Vite's transform.
           // Skip when targeting bundled runtimes (Cloudflare/Nitro bundle everything).
+          // This also resolves extensionless-import issues in packages like
+          // `validator` (see #189) by routing them through Vite's resolver.
           ...(hasCloudflarePlugin || hasNitroPlugin ? {} : {
             ssr: {
               external: ["react", "react-dom", "react-dom/server"],
@@ -2335,7 +2371,7 @@ hydrate();
             rewrites: nextConfig?.rewrites,
             headers: nextConfig?.headers,
             allowedOrigins: nextConfig?.serverActionsAllowedOrigins,
-            allowedDevOrigins: nextConfig?.serverActionsAllowedOrigins,
+            allowedDevOrigins: nextConfig?.allowedDevOrigins,
           }, instrumentationPath);
         }
         if (id === RESOLVED_APP_SSR_ENTRY && hasAppDir) {
@@ -2447,6 +2483,34 @@ hydrate();
         // Watch pages directory for file additions/removals to invalidate route cache.
         const pageExtensions = fileMatcher.extensionRegex;
 
+        // Build a long-lived ModuleRunner for loading all Pages Router modules
+        // (middleware, API routes, SSR page rendering) on every request.
+        //
+        // We must NOT use server.ssrLoadModule() here: when @cloudflare/vite-plugin
+        // is present its environments replace the SSR transport, causing
+        // SSRCompatModuleRunner to crash with:
+        //   TypeError: Cannot read properties of undefined (reading 'outsideEmitter')
+        // on the very first request.
+        //
+        // createDirectRunner() builds a runner on environment.fetchModule() which
+        // is a plain async method — safe with all plugin combinations, including
+        // @cloudflare/vite-plugin.
+        //
+        // The runner is created lazily on first use so that all environments are
+        // fully registered before we inspect them. We prefer "ssr", then any
+        // non-"rsc" environment, then whatever is available.
+        let pagesRunner: import("vite/module-runner").ModuleRunner | null = null;
+        function getPagesRunner() {
+          if (!pagesRunner) {
+            const env =
+              server.environments["ssr"] ??
+              Object.values(server.environments).find((e) => e !== server.environments["rsc"]) ??
+              Object.values(server.environments)[0];
+            pagesRunner = createDirectRunner(env);
+          }
+          return pagesRunner;
+        }
+
         /**
          * Invalidate the virtual RSC entry module in Vite's module graph.
          *
@@ -2499,7 +2563,7 @@ hydrate();
               "sec-fetch-site": req.headers["sec-fetch-site"] as string | undefined,
               "sec-fetch-mode": req.headers["sec-fetch-mode"] as string | undefined,
             },
-            nextConfig?.serverActionsAllowedOrigins,
+            nextConfig?.allowedDevOrigins,
           );
           if (blockReason) {
             console.warn(`[vinext] Blocked dev request: ${blockReason} (${req.url})`);
@@ -2513,17 +2577,28 @@ hydrate();
         // Return a function to register middleware AFTER Vite's built-in middleware
         return () => {
           // Run instrumentation.ts register() if present (once at server startup).
-          // Must be inside the returned function — ssrLoadModule() requires the
-          // SSR environment's transport channel, which is not initialized until
-          // after configureServer() returns. (See issue #167)
+          // Must be inside the returned function so that all environments are
+          // fully registered before getPagesRunner() inspects them.
           //
           // App Router: register() is baked into the generated RSC entry as a
           // top-level await, so it runs inside the Worker process (or RSC Vite
           // environment) — the same process as request handling. Calling
           // runInstrumentation() here too would run it a second time in the host
           // process, which is wrong when @cloudflare/vite-plugin is present.
+          //
+          // Pages Router prod: register() is baked into generateServerEntry() as
+          // a top-level await, so it runs inside the Worker bundle — the same
+          // process as request handling. configureServer() is never called during
+          // a prod build, so there is no double-invocation risk there either.
+          //
+          // We pass getPagesRunner() (createDirectRunner) rather than server so
+          // that this is safe when @cloudflare/vite-plugin is present. That
+          // plugin replaces the SSR environment's hot channel, causing
+          // server.ssrLoadModule() to crash with outsideEmitter. The runner
+          // calls environment.fetchModule() directly and never touches the hot
+          // channel, making it safe with all Vite plugin combinations.
           if (instrumentationPath && !hasAppDir) {
-            runInstrumentation(server, instrumentationPath).catch((err) => {
+            runInstrumentation(getPagesRunner(), instrumentationPath).catch((err) => {
               console.error("[vinext] Instrumentation error:", err);
             });
           }
@@ -2682,7 +2757,7 @@ hydrate();
                   "sec-fetch-site": req.headers["sec-fetch-site"] as string | undefined,
                   "sec-fetch-mode": req.headers["sec-fetch-mode"] as string | undefined,
                 },
-                nextConfig?.serverActionsAllowedOrigins,
+                nextConfig?.allowedDevOrigins,
               );
               if (blockReason) {
                 console.warn(`[vinext] Blocked dev request: ${blockReason} (${url})`);
@@ -2821,7 +2896,7 @@ hydrate();
                       .map(([k, v]) => [k, Array.isArray(v) ? v.join(", ") : String(v)])
                   ),
                 });
-                const result = await runMiddleware(server, middlewarePath, middlewareRequest);
+                const result = await runMiddleware(getPagesRunner(), middlewarePath, middlewareRequest);
 
                 if (!result.continue) {
                   if (result.redirectUrl) {
@@ -2872,11 +2947,41 @@ hydrate();
                 // Apply middleware rewrite (URL and optional status code)
                 if (result.rewriteUrl) {
                   url = result.rewriteUrl;
+                  // Write the rewritten URL back onto req.url so every subsequent
+                  // handler in the connect chain sees the correct path. The local
+                  // `url` variable is only visible within this handler — anything
+                  // further down the chain (Vite's built-in middleware, the
+                  // Cloudflare plugin's handler, or any other connect middleware)
+                  // reads req.url directly. Without this, a middleware rewrite
+                  // would be invisible to those handlers and the original URL
+                  // would be dispatched instead.
+                  req.url = url;
                 }
                 if (result.rewriteStatus) {
                   (req as any).__vinextRewriteStatus = result.rewriteStatus;
                 }
               }
+
+              // ── Cloudflare Workers dev mode ────────────────────────────
+              // When @cloudflare/vite-plugin is present, ALL rendering runs
+              // inside the miniflare Worker subprocess — both App Router (via
+              // virtual:vinext-rsc-entry) and Pages Router (via
+              // virtual:vinext-server-entry → renderPage/handleApiRoute).
+              //
+              // The Worker entry already handles config redirects, rewrites,
+              // headers, and all routing internally. Running them here too
+              // would duplicate that logic and produce incorrect behaviour
+              // (double redirects, headers set on the wrong object, etc.).
+              //
+              // Middleware.ts is the only thing that belongs in the host connect
+              // handler — it has already run above. Any terminal middleware
+              // result (redirect, block response) has already been sent.
+              // Any rewrite has been written back to req.url above so the
+              // Cloudflare plugin's handler sees the correct path.
+              //
+              // Call next() to hand off to the Cloudflare plugin's connect
+              // handler, which dispatches the request to miniflare.
+              if (hasCloudflarePlugin) return next();
 
               // Build request context once for has/missing condition checks
               // across headers, redirects, and rewrites.

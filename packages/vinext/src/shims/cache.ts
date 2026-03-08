@@ -581,6 +581,21 @@ const _UNSTABLE_CACHE_ALS_KEY = Symbol.for("vinext.unstableCache.als");
 const _unstableCacheAls = (
   (_g[_UNSTABLE_CACHE_ALS_KEY] ??= new AsyncLocalStorage<boolean>()) as AsyncLocalStorage<boolean>
 );
+const UNSTABLE_CACHE_UNDEFINED_SENTINEL = "__vinext_unstable_cache_undefined__";
+
+function serializeUnstableCacheResult(value: unknown): string {
+  return value === undefined
+    ? UNSTABLE_CACHE_UNDEFINED_SENTINEL
+    : JSON.stringify(value);
+}
+
+function deserializeUnstableCacheResult(body: string): unknown {
+  if (body === UNSTABLE_CACHE_UNDEFINED_SENTINEL) {
+    return undefined;
+  }
+
+  return JSON.parse(body);
+}
 
 /**
  * Check if the current execution context is inside an unstable_cache() callback.
@@ -625,7 +640,7 @@ export function unstable_cache<T extends (...args: any[]) => Promise<any>>(
     });
     if (existing?.value && existing.value.kind === "FETCH" && existing.cacheState !== "stale") {
       try {
-        return JSON.parse(existing.value.data.body);
+        return deserializeUnstableCacheResult(existing.value.data.body);
       } catch {
         // Corrupted entry, fall through to re-fetch
       }
@@ -641,7 +656,7 @@ export function unstable_cache<T extends (...args: any[]) => Promise<any>>(
       kind: "FETCH",
       data: {
         headers: {},
-        body: JSON.stringify(result),
+        body: serializeUnstableCacheResult(result),
         url: cacheKey,
       },
       tags,

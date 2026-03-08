@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
-import { createBuilder, type ViteDevServer } from "vite";
+import { createBuilder, createServer, type ViteDevServer } from "vite";
 import path from "node:path";
 import fs from "node:fs";
 import os from "node:os";
@@ -1541,6 +1541,33 @@ describe("App Router Production server (startProdServer)", () => {
     expect(html.length).toBeGreaterThan(0);
   });
 
+  it("reports server component render errors via instrumentation in production", async () => {
+    const resetRes = await fetch(`${baseUrl}/api/instrumentation-test`, {
+      method: "DELETE",
+    });
+    expect(resetRes.status).toBe(200);
+
+    const errorRes = await fetch(`${baseUrl}/error-server-test`);
+    expect(errorRes.status).toBe(200);
+    await errorRes.text();
+
+    await new Promise((resolve) => setTimeout(resolve, 200));
+
+    const stateRes = await fetch(`${baseUrl}/api/instrumentation-test`);
+    expect(stateRes.status).toBe(200);
+    const state = await stateRes.json();
+
+    expect(state.errors.length).toBeGreaterThanOrEqual(1);
+
+    const err = state.errors[state.errors.length - 1];
+    expect(err.message).toBe("Server component error");
+    expect(err.path).toBe("/error-server-test");
+    expect(err.method).toBe("GET");
+    expect(err.routerKind).toBe("App Router");
+    expect(err.routePath).toBe("/error-server-test");
+    expect(err.routeType).toBe("render");
+  });
+
   it("returns 400 for malformed percent-encoded path (not crash)", async () => {
     const res = await fetch(`${baseUrl}/%E0%A4%A`);
     expect(res.status).toBe(400);
@@ -1690,7 +1717,8 @@ describe("App Router Static export", () => {
         layouts: [],
         templates: [],
         parallelSlots: [],
-        layoutSegmentDepths: [],
+        routeSegments: ["fake", "[id]"],
+        layoutTreePositions: [],
         loadingPath: null,
         errorPath: null,
         layoutErrorPaths: [],
@@ -1741,7 +1769,8 @@ describe("App Router Static export", () => {
         layouts: [],
         templates: [],
         parallelSlots: [],
-        layoutSegmentDepths: [],
+        routeSegments: ["api", "hello"],
+        layoutTreePositions: [],
         loadingPath: null,
         errorPath: null,
         layoutErrorPaths: [],
@@ -2051,7 +2080,8 @@ describe("App Router next.config.js features (generateRscEntry)", () => {
       notFoundPath: null,
       forbiddenPath: null,
       unauthorizedPath: null,
-      layoutSegmentDepths: [0],
+      routeSegments: [],
+      layoutTreePositions: [0],
       isDynamic: false,
       params: [],
     },
@@ -2068,7 +2098,8 @@ describe("App Router next.config.js features (generateRscEntry)", () => {
       notFoundPath: null,
       forbiddenPath: null,
       unauthorizedPath: null,
-      layoutSegmentDepths: [0],
+      routeSegments: [],
+      layoutTreePositions: [0],
       isDynamic: false,
       params: [],
     },
@@ -2085,7 +2116,8 @@ describe("App Router next.config.js features (generateRscEntry)", () => {
       notFoundPath: null,
       forbiddenPath: null,
       unauthorizedPath: null,
-      layoutSegmentDepths: [0],
+      routeSegments: [],
+      layoutTreePositions: [0],
       isDynamic: true,
       params: ["slug"],
     },
@@ -2331,6 +2363,17 @@ describe("App Router next.config.js features (generateRscEntry)", () => {
     expect(code).toContain("*.my-domain.com");
   });
 
+  it("keeps allowedDevOrigins separate from allowedOrigins", () => {
+    const code = generateRscEntry("/tmp/test/app", minimalRoutes, null, [], null, "", false, {
+      allowedOrigins: ["actions.example.com"],
+      allowedDevOrigins: ["allowed.example.com"],
+    });
+    expect(code).toContain("actions.example.com");
+    expect(code).toContain("allowed.example.com");
+    expect(code).toContain("const __allowedOrigins = [\"actions.example.com\"]");
+    expect(code).toContain("const __allowedDevOrigins = [\"allowed.example.com\"]");
+  });
+
   it("embeds empty allowedOrigins when none provided", () => {
     const code = generateRscEntry("/tmp/test/app", minimalRoutes, null, [], null, "", false);
     expect(code).toContain("__allowedOrigins = []");
@@ -2368,6 +2411,59 @@ describe("App Router next.config.js features (generateRscEntry)", () => {
     expect(code).toContain("staging.example.com");
     expect(code).toContain("*.preview.dev");
     expect(code).toContain("__allowedDevOrigins");
+  });
+
+  it("loads allowedDevOrigins from next.config into the virtual RSC entry", async () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "vinext-app-rsc-allowed-dev-origins-"));
+    try {
+      fs.mkdirSync(path.join(tmpDir, "app"), { recursive: true });
+      fs.writeFileSync(
+        path.join(tmpDir, "app", "layout.tsx"),
+        "export default function Layout({ children }) { return <html><body>{children}</body></html>; }",
+      );
+      fs.writeFileSync(
+        path.join(tmpDir, "app", "page.tsx"),
+        "export default function Page() { return <div>allowed-dev-origins</div>; }",
+      );
+      fs.writeFileSync(
+        path.join(tmpDir, "next.config.mjs"),
+        `export default {
+  allowedDevOrigins: ["allowed.example.com"],
+  experimental: {
+    serverActions: {
+      allowedOrigins: ["actions.example.com"],
+    },
+  },
+};`,
+      );
+      fs.symlinkSync(
+        path.resolve(__dirname, "..", "node_modules"),
+        path.join(tmpDir, "node_modules"),
+        "junction",
+      );
+
+      const testServer = await createServer({
+        root: tmpDir,
+        configFile: false,
+        plugins: [vinext({ appDir: tmpDir })],
+        server: { port: 0 },
+        logLevel: "silent",
+      });
+
+      try {
+        const resolved = await testServer.pluginContainer.resolveId("virtual:vinext-rsc-entry");
+        expect(resolved).toBeTruthy();
+        const loaded = await testServer.pluginContainer.load(resolved!.id);
+        const code = typeof loaded === "string" ? loaded : (loaded as any)?.code ?? "";
+
+        expect(code).toContain("const __allowedDevOrigins = [\"allowed.example.com\"]");
+        expect(code).toContain("const __allowedOrigins = [\"actions.example.com\"]");
+      } finally {
+        await testServer.close();
+      }
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
   });
 
   describe("rscOnError: non-plain object dev hint", () => {

@@ -201,38 +201,23 @@ describe("next/navigation shim", () => {
     expect(typeof nav.useSelectedLayoutSegments).toBe("function");
   });
 
-  it("useSelectedLayoutSegments returns path segments from server context", async () => {
-    const { setNavigationContext, useSelectedLayoutSegments } = await import(
+  it("useSelectedLayoutSegments returns empty array outside React context", async () => {
+    const { useSelectedLayoutSegments } = await import(
       "../packages/vinext/src/shims/navigation.js"
     );
-    setNavigationContext({
-      pathname: "/dashboard/settings/profile",
-      searchParams: new URLSearchParams(""),
-      params: {},
-    });
+    // Outside a React tree, no LayoutSegmentProvider wraps us,
+    // so the context defaults to [].
     const segments = useSelectedLayoutSegments();
-    expect(segments).toEqual(["dashboard", "settings", "profile"]);
-    setNavigationContext(null);
+    expect(segments).toEqual([]);
   });
 
-  it("useSelectedLayoutSegment returns first segment or null", async () => {
-    const { setNavigationContext, useSelectedLayoutSegment } = await import(
+  it("useSelectedLayoutSegment returns null outside React context", async () => {
+    const { useSelectedLayoutSegment } = await import(
       "../packages/vinext/src/shims/navigation.js"
     );
-    setNavigationContext({
-      pathname: "/blog/my-post",
-      searchParams: new URLSearchParams(""),
-      params: {},
-    });
-    expect(useSelectedLayoutSegment()).toBe("blog");
-
-    setNavigationContext({
-      pathname: "/",
-      searchParams: new URLSearchParams(""),
-      params: {},
-    });
+    // Outside a React tree, no LayoutSegmentProvider wraps us,
+    // so there are no child segments → null.
     expect(useSelectedLayoutSegment()).toBeNull();
-    setNavigationContext(null);
   });
 });
 
@@ -730,6 +715,27 @@ describe("next/cache shim", () => {
     expect(callCount).toBe(2); // Different args = different cache key
 
     // Reset
+    setCacheHandler(new MemoryCacheHandler());
+  });
+
+  it("unstable_cache caches undefined results", async () => {
+    const { unstable_cache, setCacheHandler, MemoryCacheHandler } =
+      await import("../packages/vinext/src/shims/cache.js");
+
+    setCacheHandler(new MemoryCacheHandler());
+
+    let callCount = 0;
+    const cached = unstable_cache(async () => {
+      callCount++;
+      return undefined;
+    }, ["undefined-result-test"]);
+
+    await expect(cached()).resolves.toBeUndefined();
+    expect(callCount).toBe(1);
+
+    await expect(cached()).resolves.toBeUndefined();
+    expect(callCount).toBe(1);
+
     setCacheHandler(new MemoryCacheHandler());
   });
 
@@ -2195,7 +2201,8 @@ describe("double-encoded path handling in middleware", () => {
         pagePath: null,
         routePath: null,
         layouts: [],
-        layoutSegmentDepths: [],
+        routeSegments: [],
+        layoutTreePositions: [],
         templates: [],
         loadingPath: null,
         errorPath: null,
@@ -2230,7 +2237,8 @@ describe("double-encoded path handling in middleware", () => {
           pagePath: null,
           routePath: null,
           layouts: [],
-          layoutSegmentDepths: [],
+          routeSegments: [],
+          layoutTreePositions: [],
           templates: [],
           loadingPath: null,
           errorPath: null,
@@ -2259,8 +2267,8 @@ describe("double-encoded path handling in middleware", () => {
     );
     // Create a mock Vite server that returns a middleware module
     let capturedUrl: string | undefined;
-    const mockServer = {
-      ssrLoadModule: async () => ({
+    const mockRunner = {
+      import: async () => ({
         default: (req: Request) => {
           capturedUrl = req.url;
           return new Response("OK", {
@@ -2274,7 +2282,7 @@ describe("double-encoded path handling in middleware", () => {
     // Send a double-encoded path — after single decode, it should be /%64ashboard
     const testUrl = "http://localhost:3000/%2564ashboard";
     const request = new Request(testUrl);
-    await runMiddleware(mockServer as any, "/tmp/middleware.ts", request);
+    await runMiddleware(mockRunner as any, "/tmp/middleware.ts", request);
 
     // Middleware should have received the decoded+normalized URL
     expect(capturedUrl).toBeDefined();
@@ -2292,8 +2300,8 @@ describe("double-encoded path handling in middleware", () => {
       "../packages/vinext/src/server/middleware.js"
     );
 
-    const mockServer = {
-      ssrLoadModule: async () => ({
+    const mockRunner = {
+      import: async () => ({
         proxy: () => {
           const response = new Response(null, { status: 307 });
           response.headers.set("location", "/login");
@@ -2304,7 +2312,7 @@ describe("double-encoded path handling in middleware", () => {
     };
 
     const request = new Request("http://localhost/protected");
-    const result = await runMiddleware(mockServer as any, "/tmp/proxy.js", request);
+    const result = await runMiddleware(mockRunner as any, "/tmp/proxy.js", request);
 
     expect(result.continue).toBe(false);
     expect(result.redirectUrl).toContain("/login");
@@ -2326,6 +2334,69 @@ describe("double-encoded path handling in middleware", () => {
     expect(entryCode).toContain("decodeURIComponent(rawPathname)");
     // The delegate call should pass `request` (not normalizedRequest)
     expect(entryCode).toMatch(/rscHandler\(request\)/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// NextFetchEvent — middleware receives event with waitUntil support
+
+describe("NextFetchEvent passed to middleware", () => {
+  it("runMiddleware passes NextFetchEvent as second argument", async () => {
+    const { runMiddleware } = await import(
+      "../packages/vinext/src/server/middleware.js"
+    );
+    // Middleware that accesses event.waitUntil — will throw if event is undefined
+    let receivedEvent: any;
+    const mockRunner = {
+      import: async () => ({
+        middleware: (req: any, event: any) => {
+          receivedEvent = event;
+          event.waitUntil(Promise.resolve("done"));
+          return new Response(null, {
+            headers: { "x-middleware-next": "1" },
+          });
+        },
+        config: { matcher: ["/test"] },
+      }),
+    };
+
+    const request = new Request("http://localhost:3000/test");
+    const result = await runMiddleware(mockRunner as any, "/tmp/middleware.ts", request);
+
+    expect(result.continue).toBe(true);
+    expect(receivedEvent).toBeDefined();
+    expect(typeof receivedEvent.waitUntil).toBe("function");
+    expect(receivedEvent.sourcePage).toBe("/test");
+  });
+
+  it("waitUntil promises are drained after middleware runs", async () => {
+    const { runMiddleware } = await import(
+      "../packages/vinext/src/server/middleware.js"
+    );
+    let sideEffectRan = false;
+    const mockRunner = {
+      import: async () => ({
+        middleware: (_req: any, event: any) => {
+          event.waitUntil(
+            Promise.resolve().then(() => {
+              sideEffectRan = true;
+            }),
+          );
+          return new Response(null, {
+            headers: { "x-middleware-next": "1" },
+          });
+        },
+        config: { matcher: ["/drain"] },
+      }),
+    };
+
+    const request = new Request("http://localhost:3000/drain");
+    await runMiddleware(mockRunner as any, "/tmp/middleware.ts", request);
+
+    // The waitUntil promise should have been resolved.
+    // Flush the microtask queue so Promise.resolve().then(...) callbacks run.
+    await new Promise((r) => queueMicrotask(r as () => void));
+    expect(sideEffectRan).toBe(true);
   });
 });
 
@@ -5068,6 +5139,48 @@ describe("cacheComponents config (Next.js 16)", () => {
     expect(config.serverActionsAllowedOrigins).toEqual(["my-proxy.com", "*.my-domain.com"]);
   });
 
+  it("resolveNextConfig resolves allowedDevOrigins from top-level config", async () => {
+    const { resolveNextConfig } = await import(
+      "../packages/vinext/src/config/next-config.js"
+    );
+    const config = await resolveNextConfig({
+      allowedDevOrigins: ["staging.example.com", "*.preview.dev"],
+    });
+    expect(config.allowedDevOrigins).toEqual(["staging.example.com", "*.preview.dev"]);
+  });
+
+  it("resolveNextConfig keeps allowedDevOrigins separate from serverActionsAllowedOrigins", async () => {
+    const { resolveNextConfig } = await import(
+      "../packages/vinext/src/config/next-config.js"
+    );
+    const config = await resolveNextConfig({
+      allowedDevOrigins: ["dev.example.com"],
+      experimental: {
+        serverActions: {
+          allowedOrigins: ["actions.example.com"],
+        },
+      },
+    });
+    expect(config.allowedDevOrigins).toEqual(["dev.example.com"]);
+    expect(config.serverActionsAllowedOrigins).toEqual(["actions.example.com"]);
+  });
+
+  it("resolveNextConfig defaults allowedDevOrigins to empty array", async () => {
+    const { resolveNextConfig } = await import(
+      "../packages/vinext/src/config/next-config.js"
+    );
+    const config = await resolveNextConfig({});
+    expect(config.allowedDevOrigins).toEqual([]);
+  });
+
+  it("resolveNextConfig handles null input with empty allowedDevOrigins", async () => {
+    const { resolveNextConfig } = await import(
+      "../packages/vinext/src/config/next-config.js"
+    );
+    const config = await resolveNextConfig(null);
+    expect(config.allowedDevOrigins).toEqual([]);
+  });
+
   it("resolveNextConfig defaults serverActionsAllowedOrigins to empty array", async () => {
     const { resolveNextConfig } = await import(
       "../packages/vinext/src/config/next-config.js"
@@ -5219,8 +5332,8 @@ describe("extractMdxOptions", () => {
     const { extractMdxOptions } = await import(
       "../packages/vinext/src/config/next-config.js"
     );
-    expect(extractMdxOptions({})).toBeNull();
-    expect(extractMdxOptions({ webpack: "not a function" })).toBeNull();
+    await expect(extractMdxOptions({})).resolves.toBeNull();
+    await expect(extractMdxOptions({ webpack: "not a function" })).resolves.toBeNull();
   });
 
   it("extracts remarkPlugins from webpack rule", async () => {
@@ -5245,7 +5358,7 @@ describe("extractMdxOptions", () => {
         return webpackConfig;
       },
     };
-    const result = extractMdxOptions(config);
+    const result = await extractMdxOptions(config);
     expect(result).not.toBeNull();
     expect(result!.remarkPlugins).toHaveLength(1);
     expect(result!.remarkPlugins![0]).toEqual([fakeRemarkPlugin, { option: true }]);
@@ -5274,7 +5387,7 @@ describe("extractMdxOptions", () => {
         return webpackConfig;
       },
     };
-    const result = extractMdxOptions(config);
+    const result = await extractMdxOptions(config);
     expect(result).not.toBeNull();
     expect(result!.rehypePlugins).toHaveLength(1);
     expect(result!.remarkPlugins).toBeUndefined();
@@ -5301,7 +5414,7 @@ describe("extractMdxOptions", () => {
         return webpackConfig;
       },
     };
-    const result = extractMdxOptions(config);
+    const result = await extractMdxOptions(config);
     expect(result).not.toBeNull();
     expect(result!.recmaPlugins).toHaveLength(1);
   });
@@ -5331,7 +5444,7 @@ describe("extractMdxOptions", () => {
         return webpackConfig;
       },
     };
-    const result = extractMdxOptions(config);
+    const result = await extractMdxOptions(config);
     expect(result).not.toBeNull();
     expect(result!.remarkPlugins).toHaveLength(1);
   });
@@ -5345,7 +5458,7 @@ describe("extractMdxOptions", () => {
         throw new Error("some webpack error");
       },
     };
-    expect(extractMdxOptions(config)).toBeNull();
+    await expect(extractMdxOptions(config)).resolves.toBeNull();
   });
 
   it("returns null when webpack has no MDX loader", async () => {
@@ -5361,7 +5474,7 @@ describe("extractMdxOptions", () => {
         return webpackConfig;
       },
     };
-    expect(extractMdxOptions(config)).toBeNull();
+    await expect(extractMdxOptions(config)).resolves.toBeNull();
   });
 
   it("returns null when MDX loader has empty plugin arrays", async () => {
@@ -5385,7 +5498,7 @@ describe("extractMdxOptions", () => {
         return webpackConfig;
       },
     };
-    expect(extractMdxOptions(config)).toBeNull();
+    await expect(extractMdxOptions(config)).resolves.toBeNull();
   });
 
   it("resolveNextConfig extracts mdx from webpack closure", async () => {

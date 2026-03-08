@@ -18,10 +18,10 @@
  * Supports the `config.matcher` export for path filtering.
  */
 
-import type { ViteDevServer } from "vite";
+import type { ModuleRunner } from "vite/module-runner";
 import fs from "node:fs";
 import path from "node:path";
-import { NextRequest } from "../shims/server.js";
+import { NextRequest, NextFetchEvent } from "../shims/server.js";
 import { safeRegExp } from "../config/config-matchers.js";
 import { normalizePath } from "./normalize-path.js";
 
@@ -224,18 +224,24 @@ export interface MiddlewareResult {
 /**
  * Load and execute middleware for a given request.
  *
- * @param server - Vite dev server (for SSR module loading)
+ * @param runner - A ModuleRunner used to load the middleware module.
+ *   Must be a long-lived instance created once (e.g. in configureServer) via
+ *   createDirectRunner() — NOT recreated per request. Using server.ssrLoadModule
+ *   directly crashes with `outsideEmitter` when @cloudflare/vite-plugin is
+ *   present because SSRCompatModuleRunner reads environment.hot.api synchronously.
  * @param middlewarePath - Absolute path to the middleware file
  * @param request - The incoming Request object
  * @returns Middleware result describing what action to take
  */
 export async function runMiddleware(
-  server: ViteDevServer,
+  runner: ModuleRunner,
   middlewarePath: string,
   request: Request,
 ): Promise<MiddlewareResult> {
-  // Load the middleware module via Vite's SSR module loader
-  const mod = await server.ssrLoadModule(middlewarePath);
+  // Load the middleware module via the direct-call ModuleRunner.
+  // This bypasses the hot channel entirely and is safe with all Vite plugin
+  // combinations, including @cloudflare/vite-plugin.
+  const mod = await runner.import(middlewarePath) as Record<string, unknown>;
 
   // Resolve the handler based on file type (proxy.ts vs middleware.ts).
   // Throws if the file doesn't export a valid function, matching Next.js behavior.
@@ -243,7 +249,7 @@ export async function runMiddleware(
   const middlewareFn = resolveMiddlewareHandler(mod, middlewarePath);
 
   // Check matcher config
-  const config = mod.config;
+  const config = mod.config as { matcher?: MatcherConfig } | undefined;
   const matcher = config?.matcher;
   const url = new URL(request.url);
 
@@ -273,11 +279,12 @@ export async function runMiddleware(
 
   // Wrap in NextRequest so middleware gets .nextUrl, .cookies, .geo, .ip, etc.
   const nextRequest = mwRequest instanceof NextRequest ? mwRequest : new NextRequest(mwRequest);
+  const fetchEvent = new NextFetchEvent({ page: normalizedPathname });
 
   // Execute the middleware
   let response: Response | undefined;
   try {
-    response = await middlewareFn(nextRequest);
+    response = await middlewareFn(nextRequest, fetchEvent);
   } catch (e: any) {
     console.error("[vinext] Middleware error:", e);
     const message =
@@ -291,6 +298,10 @@ export async function runMiddleware(
       }),
     };
   }
+
+  // Drain waitUntil promises (fire-and-forget: we don't block the response
+  // on these — matches platform semantics where waitUntil runs after response).
+  fetchEvent.drainWaitUntil();
 
   // No response = continue
   if (!response) {

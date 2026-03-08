@@ -663,6 +663,60 @@ describe("Pages Router dev server origin check", () => {
   });
 });
 
+// Ported from Next.js: test/development/basic/allowed-dev-origins.test.ts
+// https://github.com/vercel/next.js/blob/canary/test/development/basic/allowed-dev-origins.test.ts
+describe("Pages Router allowedDevOrigins config", () => {
+  let server: ViteDevServer;
+  let baseUrl: string;
+  let tmpDir: string;
+
+  beforeAll(async () => {
+    tmpDir = await fsp.mkdtemp(path.join(os.tmpdir(), "vinext-pages-allowed-dev-origins-"));
+    await fsp.mkdir(path.join(tmpDir, "pages"), { recursive: true });
+    await fsp.symlink(
+      path.resolve(import.meta.dirname, "../node_modules"),
+      path.join(tmpDir, "node_modules"),
+      "junction",
+    );
+    await fsp.writeFile(
+      path.join(tmpDir, "pages", "index.tsx"),
+      `export default function Home() { return <div>allowed-dev-origins-pages</div>; }`,
+    );
+    await fsp.writeFile(
+      path.join(tmpDir, "next.config.mjs"),
+      `export default {
+  allowedDevOrigins: ["allowed.example.com"],
+  experimental: {
+    serverActions: {
+      allowedOrigins: ["actions.example.com"],
+    },
+  },
+};
+`,
+    );
+    ({ server, baseUrl } = await startFixtureServer(tmpDir));
+  }, 30000);
+
+  afterAll(async () => {
+    await server?.close();
+    await fsp.rm(tmpDir, { recursive: true, force: true });
+  });
+
+  it("allows cross-origin requests from allowedDevOrigins", async () => {
+    const res = await fetch(`${baseUrl}/`, {
+      headers: { Origin: "http://allowed.example.com" },
+    });
+    expect(res.status).toBe(200);
+  });
+
+  it("does not treat serverActions.allowedOrigins as allowedDevOrigins", async () => {
+    const res = await fetch(`${baseUrl}/`, {
+      headers: { Origin: "http://actions.example.com" },
+    });
+    expect(res.status).toBe(403);
+  });
+});
+
 describe("Virtual server entry generation", () => {
   it("generates valid JavaScript for the server entry", async () => {
     // Create a minimal server just to access the plugin's virtual module
