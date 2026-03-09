@@ -3078,7 +3078,7 @@ hydrate();
                   nextConfig.rewrites.afterFiles,
                   reqCtx,
                 );
-                if (afterRewrite) {
+                  resolvedUrl = afterRewrite;
                   // External rewrite from afterFiles — proxy to external URL
                   if (isExternalUrl(afterRewrite)) {
                     await proxyExternalRewriteNode(req, res, afterRewrite);
