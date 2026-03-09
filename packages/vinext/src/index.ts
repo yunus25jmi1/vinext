@@ -2123,13 +2123,13 @@ export default function vinext(options: VinextOptions = {}): PluginOption[] {
                   nextConfig.rewrites.afterFiles,
                   reqCtx,
                 );
+                if (afterRewrite) {
                   resolvedUrl = afterRewrite;
                   // External rewrite from afterFiles — proxy to external URL
                   if (isExternalUrl(afterRewrite)) {
                     await proxyExternalRewriteNode(req, res, afterRewrite);
                     return;
                   }
-                  resolvedUrl = afterRewrite;
                   // If the rewritten path has a file extension, it may point to a
                   // static file in public/. Serve it directly before route matching
                   // (which would miss it and SSR would return 404).
@@ -2146,13 +2146,7 @@ export default function vinext(options: VinextOptions = {}): PluginOption[] {
                         res.end(content);
                         return;
                       }
-                    } catch (e) { if (e?.code !== 'ENOENT') console.warn('[vinext] static file check failed:', e); }
-                      const content = fs.readFileSync(publicFilePath);
-                      const ext = (path.extname(afterFilesPathname).slice(1)).toLowerCase();
-                      res.writeHead(200, { "Content-Type": mimeType(ext) });
-                      res.end(content);
-                      return;
-                    }
+                    } catch (e: any) { if (e?.code !== 'ENOENT') console.warn('[vinext] static file check failed:', e); }
                   }
                 }
               }
@@ -2214,7 +2208,11 @@ export default function vinext(options: VinextOptions = {}): PluginOption[] {
               // otherwise render via the pages SSR handler (will 404 for unknown routes).
               if (hasAppDir) return next();
 
-              await handler(req, res, resolvedUrl, mwStatus);
+              try {
+                await handler(req, res, resolvedUrl, mwStatus);
+              } catch (e) {
+                next(e);
+              }
             } catch (e) {
               next(e);
             }
