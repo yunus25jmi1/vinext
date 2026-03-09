@@ -2134,12 +2134,16 @@ export default function vinext(options: VinextOptions = {}): PluginOption[] {
                   // static file in public/. Serve it directly before route matching
                   // (which would miss it and SSR would return 404).
                   const afterFilesPathname = afterRewrite.split("?")[0];
+                  const afterFilesPathname = afterRewrite.split("?")[0];
                   if (path.extname(afterFilesPathname)) {
                     // "." + afterFilesPathname works because rewrite destinations always start with "/"
                     const publicFilePath = path.resolve(
                       resolvedPublicDir,
                       "." + afterFilesPathname,
                     );
+                    if (
+                      publicFilePath.startsWith(resolvedPublicDir + path.sep)
+                    ) {
                     try {
                       const stat = fs.statSync(publicFilePath);
                       if (stat.isFile()) {
@@ -2152,6 +2156,7 @@ export default function vinext(options: VinextOptions = {}): PluginOption[] {
                     } catch (e: any) {
                       if (e?.code !== "ENOENT")
                         console.warn("[vinext] static file check failed:", e);
+                    }
                     }
                   }
                 }
