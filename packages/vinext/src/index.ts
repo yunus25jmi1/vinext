@@ -3092,7 +3092,16 @@ hydrate();
                   if (path.extname(afterFilesPathname)) {
                     // "." + afterFilesPathname works because rewrite destinations always start with "/"
                     const publicFilePath = path.resolve(resolvedPublicDir, "." + afterFilesPathname);
-                    if (publicFilePath.startsWith(resolvedPublicDir + path.sep) && fs.existsSync(publicFilePath) && fs.statSync(publicFilePath).isFile()) {
+                    try {
+                      const stat = fs.statSync(publicFilePath);
+                      if (stat.isFile()) {
+                        const content = fs.readFileSync(publicFilePath);
+                        const ext = (path.extname(afterFilesPathname).slice(1)).toLowerCase();
+                        res.writeHead(200, { "Content-Type": mimeType(ext) });
+                        res.end(content);
+                        return;
+                      }
+                    } catch (e) { if (e?.code !== 'ENOENT') console.warn('[vinext] static file check failed:', e); }
                       const content = fs.readFileSync(publicFilePath);
                       const ext = (path.extname(afterFilesPathname).slice(1)).toLowerCase();
                       res.writeHead(200, { "Content-Type": mimeType(ext) });
