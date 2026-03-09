@@ -37,6 +37,8 @@ export interface AppRouterConfig {
   allowedOrigins?: string[];
   /** Extra origins allowed for dev server access (from allowedDevOrigins). */
   allowedDevOrigins?: string[];
+  /** Body size limit for server actions in bytes (from experimental.serverActions.bodySizeLimit). */
+  bodySizeLimit?: number;
 }
 
 /**
@@ -63,6 +65,7 @@ export function generateRscEntry(
   const rewrites = config?.rewrites ?? { beforeFiles: [], afterFiles: [], fallback: [] };
   const headers = config?.headers ?? [];
   const allowedOrigins = config?.allowedOrigins ?? [];
+  const bodySizeLimit = config?.bodySizeLimit ?? 1 * 1024 * 1024;
   // Build import map for all page and layout files
   const imports: string[] = [];
   const importMap: Map<string, string> = new Map();
@@ -1110,12 +1113,13 @@ function __buildPostMwRequestContext(request) {
 }
 
 /**
- * Maximum server-action request body size (1 MB).
- * Matches the Next.js default for serverActions.bodySizeLimit.
+ * Maximum server-action request body size.
+ * Configurable via experimental.serverActions.bodySizeLimit in next.config.
+ * Defaults to 1MB, matching the Next.js default.
  * @see https://nextjs.org/docs/app/api-reference/config/next-config-js/serverActions#bodysizelimit
  * Prevents unbounded request body buffering.
  */
-var __MAX_ACTION_BODY_SIZE = 1 * 1024 * 1024;
+var __MAX_ACTION_BODY_SIZE = ${JSON.stringify(bodySizeLimit)};
 
 /**
  * Read a request body as text with a size limit.
@@ -1235,10 +1239,13 @@ async function _handleRequest(request, __reqCtx, _mwCtx) {
   // Format: "handlerStart,compileMs,renderMs" - all as integers (ms). Dev-only.
   const url = new URL(request.url);
 
-  // ── Cross-origin request protection ─────────────────────────────────
+  // ── Cross-origin request protection (dev only) ─────────────────────
   // Block requests from non-localhost origins to prevent data exfiltration.
-  const __originBlock = __validateDevRequestOrigin(request);
-  if (__originBlock) return __originBlock;
+  // Skipped in production — Vite replaces NODE_ENV at build time.
+  if (process.env.NODE_ENV !== "production") {
+    const __originBlock = __validateDevRequestOrigin(request);
+    if (__originBlock) return __originBlock;
+  }
 
   // Guard against protocol-relative URL open redirects (see request-pipeline.ts).
   const __protoGuard = guardProtocolRelativeUrl(url.pathname);
