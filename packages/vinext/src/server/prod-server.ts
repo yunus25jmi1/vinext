@@ -1009,7 +1009,10 @@ async function startPagesRouterServer(options: PagesRouterServerOptions) {
           // If the rewritten path has a file extension, it may point to a static
           // file in public/ (copied to clientDir during build). Try to serve it
           // directly before falling through to SSR (which would return 404).
-          if (path.extname(resolvedPathname) && tryServeStatic(req, res, clientDir, resolvedPathname, compress)) {
+          if (
+            path.extname(resolvedPathname) &&
+            tryServeStatic(req, res, clientDir, resolvedPathname, compress)
+          ) {
             return;
           }
         }
@@ -1035,7 +1038,10 @@ async function startPagesRouterServer(options: PagesRouterServerOptions) {
             }
             // Check if fallback targets a static file in public/
             const fallbackPathname = fallbackRewrite.split("?")[0];
-            if (path.extname(fallbackPathname) && tryServeStatic(req, res, clientDir, fallbackPathname, compress)) {
+            if (
+              path.extname(fallbackPathname) &&
+              tryServeStatic(req, res, clientDir, fallbackPathname, compress)
+            ) {
               return;
             }
             response = await renderPage(webRequest, fallbackRewrite, ssrManifest);

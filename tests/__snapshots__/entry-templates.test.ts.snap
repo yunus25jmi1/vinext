@@ -335,6 +335,8 @@ main();
 
 exports[`App Router entry templates > generateRscEntry snapshot (minimal routes) 1`] = `
 "
+import __nodeFs from "node:fs";
+import __nodePath from "node:path";
 import {
   renderToReadableStream,
   decodeReply,
@@ -1300,6 +1302,8 @@ const __configRedirects = [];
 const __configRewrites = {"beforeFiles":[],"afterFiles":[],"fallback":[]};
 const __configHeaders = [];
 const __allowedOrigins = [];
+const __mimeTypes = {"html":"text/html; charset=utf-8","htm":"text/html; charset=utf-8","css":"text/css","js":"application/javascript","mjs":"application/javascript","cjs":"application/javascript","json":"application/json","txt":"text/plain","xml":"application/xml","svg":"image/svg+xml","png":"image/png","jpg":"image/jpeg","jpeg":"image/jpeg","gif":"image/gif","webp":"image/webp","avif":"image/avif","ico":"image/x-icon","woff":"font/woff","woff2":"font/woff2","ttf":"font/ttf","otf":"font/otf","eot":"application/vnd.ms-fontobject","pdf":"application/pdf","map":"application/json","mp4":"video/mp4","webm":"video/webm","mp3":"audio/mpeg","ogg":"audio/ogg","wasm":"application/wasm"};
+const __publicDir = null;
 
 
 // ── Dev server origin verification ──────────────────────────────────────
@@ -1908,6 +1912,26 @@ async function _handleRequest(request, __reqCtx, _mwCtx) {
         return proxyExternalRequest(request, __afterRewritten);
       }
       cleanPathname = __afterRewritten;
+      // If the rewritten path has a file extension, it may point to a static
+      // file in public/. Serve it directly before route matching.
+      const __afterExtname = __nodePath.extname(cleanPathname);
+      if (__afterExtname && __publicDir !== null) {
+        // "." + cleanPathname works because rewrite destinations always start with "/";
+        // the traversal guard below catches any malformed path regardless.
+        const __afterPublicFile = __nodePath.resolve(__publicDir, "." + cleanPathname);
+        if (__afterPublicFile.startsWith(__publicDir + __nodePath.sep)) {
+          try {
+            const __afterStat = __nodeFs.statSync(__afterPublicFile);
+            if (__afterStat.isFile()) {
+              const __afterContent = __nodeFs.readFileSync(__afterPublicFile);
+              const __afterExt = __afterExtname.slice(1).toLowerCase();
+              setHeadersContext(null);
+              setNavigationContext(null);
+              return new Response(__afterContent, { status: 200, headers: { "Content-Type": __mimeTypes[__afterExt] ?? "application/octet-stream" } });
+            }
+          } catch (__e) { if (__e?.code !== 'ENOENT') console.warn('[vinext] static file check failed:', __e); }
+        }
+      }
     }
   }
 
@@ -1923,6 +1947,24 @@ async function _handleRequest(request, __reqCtx, _mwCtx) {
         return proxyExternalRequest(request, __fallbackRewritten);
       }
       cleanPathname = __fallbackRewritten;
+      // Check if fallback targets a static file in public/
+      const __fbExtname = __nodePath.extname(cleanPathname);
+      if (__fbExtname && __publicDir !== null) {
+        // "." + cleanPathname: see afterFiles comment above — leading "/" is assumed.
+        const __fbPublicFile = __nodePath.resolve(__publicDir, "." + cleanPathname);
+        if (__fbPublicFile.startsWith(__publicDir + __nodePath.sep)) {
+          try {
+            const __fbStat = __nodeFs.statSync(__fbPublicFile);
+            if (__fbStat.isFile()) {
+              const __fbContent = __nodeFs.readFileSync(__fbPublicFile);
+              const __fbExt = __fbExtname.slice(1).toLowerCase();
+              setHeadersContext(null);
+              setNavigationContext(null);
+              return new Response(__fbContent, { status: 200, headers: { "Content-Type": __mimeTypes[__fbExt] ?? "application/octet-stream" } });
+            }
+          } catch (__e) { if (__e?.code !== 'ENOENT') console.warn('[vinext] static file check failed:', __e); }
+        }
+      }
       match = matchRoute(cleanPathname, routes);
     }
   }
@@ -2622,6 +2664,8 @@ if (import.meta.hot) {
 
 exports[`App Router entry templates > generateRscEntry snapshot (with config) 1`] = `
 "
+import __nodeFs from "node:fs";
+import __nodePath from "node:path";
 import {
   renderToReadableStream,
   decodeReply,
@@ -3587,6 +3631,8 @@ const __configRedirects = [{"source":"/old","destination":"/new","permanent":tru
 const __configRewrites = {"beforeFiles":[{"source":"/api/:path*","destination":"/backend/:path*"}],"afterFiles":[],"fallback":[]};
 const __configHeaders = [{"source":"/api/:path*","headers":[{"key":"X-Custom","value":"test"}]}];
 const __allowedOrigins = ["https://example.com"];
+const __mimeTypes = {"html":"text/html; charset=utf-8","htm":"text/html; charset=utf-8","css":"text/css","js":"application/javascript","mjs":"application/javascript","cjs":"application/javascript","json":"application/json","txt":"text/plain","xml":"application/xml","svg":"image/svg+xml","png":"image/png","jpg":"image/jpeg","jpeg":"image/jpeg","gif":"image/gif","webp":"image/webp","avif":"image/avif","ico":"image/x-icon","woff":"font/woff","woff2":"font/woff2","ttf":"font/ttf","otf":"font/otf","eot":"application/vnd.ms-fontobject","pdf":"application/pdf","map":"application/json","mp4":"video/mp4","webm":"video/webm","mp3":"audio/mpeg","ogg":"audio/ogg","wasm":"application/wasm"};
+const __publicDir = null;
 
 
 // ── Dev server origin verification ──────────────────────────────────────
@@ -4198,6 +4244,26 @@ async function _handleRequest(request, __reqCtx, _mwCtx) {
         return proxyExternalRequest(request, __afterRewritten);
       }
       cleanPathname = __afterRewritten;
+      // If the rewritten path has a file extension, it may point to a static
+      // file in public/. Serve it directly before route matching.
+      const __afterExtname = __nodePath.extname(cleanPathname);
+      if (__afterExtname && __publicDir !== null) {
+        // "." + cleanPathname works because rewrite destinations always start with "/";
+        // the traversal guard below catches any malformed path regardless.
+        const __afterPublicFile = __nodePath.resolve(__publicDir, "." + cleanPathname);
+        if (__afterPublicFile.startsWith(__publicDir + __nodePath.sep)) {
+          try {
+            const __afterStat = __nodeFs.statSync(__afterPublicFile);
+            if (__afterStat.isFile()) {
+              const __afterContent = __nodeFs.readFileSync(__afterPublicFile);
+              const __afterExt = __afterExtname.slice(1).toLowerCase();
+              setHeadersContext(null);
+              setNavigationContext(null);
+              return new Response(__afterContent, { status: 200, headers: { "Content-Type": __mimeTypes[__afterExt] ?? "application/octet-stream" } });
+            }
+          } catch (__e) { if (__e?.code !== 'ENOENT') console.warn('[vinext] static file check failed:', __e); }
+        }
+      }
     }
   }
 
@@ -4213,6 +4279,24 @@ async function _handleRequest(request, __reqCtx, _mwCtx) {
         return proxyExternalRequest(request, __fallbackRewritten);
       }
       cleanPathname = __fallbackRewritten;
+      // Check if fallback targets a static file in public/
+      const __fbExtname = __nodePath.extname(cleanPathname);
+      if (__fbExtname && __publicDir !== null) {
+        // "." + cleanPathname: see afterFiles comment above — leading "/" is assumed.
+        const __fbPublicFile = __nodePath.resolve(__publicDir, "." + cleanPathname);
+        if (__fbPublicFile.startsWith(__publicDir + __nodePath.sep)) {
+          try {
+            const __fbStat = __nodeFs.statSync(__fbPublicFile);
+            if (__fbStat.isFile()) {
+              const __fbContent = __nodeFs.readFileSync(__fbPublicFile);
+              const __fbExt = __fbExtname.slice(1).toLowerCase();
+              setHeadersContext(null);
+              setNavigationContext(null);
+              return new Response(__fbContent, { status: 200, headers: { "Content-Type": __mimeTypes[__fbExt] ?? "application/octet-stream" } });
+            }
+          } catch (__e) { if (__e?.code !== 'ENOENT') console.warn('[vinext] static file check failed:', __e); }
+        }
+      }
       match = matchRoute(cleanPathname, routes);
     }
   }
@@ -4912,6 +4996,8 @@ if (import.meta.hot) {
 
 exports[`App Router entry templates > generateRscEntry snapshot (with global error) 1`] = `
 "
+import __nodeFs from "node:fs";
+import __nodePath from "node:path";
 import {
   renderToReadableStream,
   decodeReply,
@@ -5907,6 +5993,8 @@ const __configRedirects = [];
 const __configRewrites = {"beforeFiles":[],"afterFiles":[],"fallback":[]};
 const __configHeaders = [];
 const __allowedOrigins = [];
+const __mimeTypes = {"html":"text/html; charset=utf-8","htm":"text/html; charset=utf-8","css":"text/css","js":"application/javascript","mjs":"application/javascript","cjs":"application/javascript","json":"application/json","txt":"text/plain","xml":"application/xml","svg":"image/svg+xml","png":"image/png","jpg":"image/jpeg","jpeg":"image/jpeg","gif":"image/gif","webp":"image/webp","avif":"image/avif","ico":"image/x-icon","woff":"font/woff","woff2":"font/woff2","ttf":"font/ttf","otf":"font/otf","eot":"application/vnd.ms-fontobject","pdf":"application/pdf","map":"application/json","mp4":"video/mp4","webm":"video/webm","mp3":"audio/mpeg","ogg":"audio/ogg","wasm":"application/wasm"};
+const __publicDir = null;
 
 
 // ── Dev server origin verification ──────────────────────────────────────
@@ -6515,6 +6603,26 @@ async function _handleRequest(request, __reqCtx, _mwCtx) {
         return proxyExternalRequest(request, __afterRewritten);
       }
       cleanPathname = __afterRewritten;
+      // If the rewritten path has a file extension, it may point to a static
+      // file in public/. Serve it directly before route matching.
+      const __afterExtname = __nodePath.extname(cleanPathname);
+      if (__afterExtname && __publicDir !== null) {
+        // "." + cleanPathname works because rewrite destinations always start with "/";
+        // the traversal guard below catches any malformed path regardless.
+        const __afterPublicFile = __nodePath.resolve(__publicDir, "." + cleanPathname);
+        if (__afterPublicFile.startsWith(__publicDir + __nodePath.sep)) {
+          try {
+            const __afterStat = __nodeFs.statSync(__afterPublicFile);
+            if (__afterStat.isFile()) {
+              const __afterContent = __nodeFs.readFileSync(__afterPublicFile);
+              const __afterExt = __afterExtname.slice(1).toLowerCase();
+              setHeadersContext(null);
+              setNavigationContext(null);
+              return new Response(__afterContent, { status: 200, headers: { "Content-Type": __mimeTypes[__afterExt] ?? "application/octet-stream" } });
+            }
+          } catch (__e) { if (__e?.code !== 'ENOENT') console.warn('[vinext] static file check failed:', __e); }
+        }
+      }
     }
   }
 
@@ -6530,6 +6638,24 @@ async function _handleRequest(request, __reqCtx, _mwCtx) {
         return proxyExternalRequest(request, __fallbackRewritten);
       }
       cleanPathname = __fallbackRewritten;
+      // Check if fallback targets a static file in public/
+      const __fbExtname = __nodePath.extname(cleanPathname);
+      if (__fbExtname && __publicDir !== null) {
+        // "." + cleanPathname: see afterFiles comment above — leading "/" is assumed.
+        const __fbPublicFile = __nodePath.resolve(__publicDir, "." + cleanPathname);
+        if (__fbPublicFile.startsWith(__publicDir + __nodePath.sep)) {
+          try {
+            const __fbStat = __nodeFs.statSync(__fbPublicFile);
+            if (__fbStat.isFile()) {
+              const __fbContent = __nodeFs.readFileSync(__fbPublicFile);
+              const __fbExt = __fbExtname.slice(1).toLowerCase();
+              setHeadersContext(null);
+              setNavigationContext(null);
+              return new Response(__fbContent, { status: 200, headers: { "Content-Type": __mimeTypes[__fbExt] ?? "application/octet-stream" } });
+            }
+          } catch (__e) { if (__e?.code !== 'ENOENT') console.warn('[vinext] static file check failed:', __e); }
+        }
+      }
       match = matchRoute(cleanPathname, routes);
     }
   }
@@ -7237,6 +7363,8 @@ if (import.meta.hot) {
 
 exports[`App Router entry templates > generateRscEntry snapshot (with instrumentation) 1`] = `
 "
+import __nodeFs from "node:fs";
+import __nodePath from "node:path";
 import {
   renderToReadableStream,
   decodeReply,
@@ -8231,6 +8359,8 @@ const __configRedirects = [];
 const __configRewrites = {"beforeFiles":[],"afterFiles":[],"fallback":[]};
 const __configHeaders = [];
 const __allowedOrigins = [];
+const __mimeTypes = {"html":"text/html; charset=utf-8","htm":"text/html; charset=utf-8","css":"text/css","js":"application/javascript","mjs":"application/javascript","cjs":"application/javascript","json":"application/json","txt":"text/plain","xml":"application/xml","svg":"image/svg+xml","png":"image/png","jpg":"image/jpeg","jpeg":"image/jpeg","gif":"image/gif","webp":"image/webp","avif":"image/avif","ico":"image/x-icon","woff":"font/woff","woff2":"font/woff2","ttf":"font/ttf","otf":"font/otf","eot":"application/vnd.ms-fontobject","pdf":"application/pdf","map":"application/json","mp4":"video/mp4","webm":"video/webm","mp3":"audio/mpeg","ogg":"audio/ogg","wasm":"application/wasm"};
+const __publicDir = null;
 
 
 // ── Dev server origin verification ──────────────────────────────────────
@@ -8842,6 +8972,26 @@ async function _handleRequest(request, __reqCtx, _mwCtx) {
         return proxyExternalRequest(request, __afterRewritten);
       }
       cleanPathname = __afterRewritten;
+      // If the rewritten path has a file extension, it may point to a static
+      // file in public/. Serve it directly before route matching.
+      const __afterExtname = __nodePath.extname(cleanPathname);
+      if (__afterExtname && __publicDir !== null) {
+        // "." + cleanPathname works because rewrite destinations always start with "/";
+        // the traversal guard below catches any malformed path regardless.
+        const __afterPublicFile = __nodePath.resolve(__publicDir, "." + cleanPathname);
+        if (__afterPublicFile.startsWith(__publicDir + __nodePath.sep)) {
+          try {
+            const __afterStat = __nodeFs.statSync(__afterPublicFile);
+            if (__afterStat.isFile()) {
+              const __afterContent = __nodeFs.readFileSync(__afterPublicFile);
+              const __afterExt = __afterExtname.slice(1).toLowerCase();
+              setHeadersContext(null);
+              setNavigationContext(null);
+              return new Response(__afterContent, { status: 200, headers: { "Content-Type": __mimeTypes[__afterExt] ?? "application/octet-stream" } });
+            }
+          } catch (__e) { if (__e?.code !== 'ENOENT') console.warn('[vinext] static file check failed:', __e); }
+        }
+      }
     }
   }
 
@@ -8857,6 +9007,24 @@ async function _handleRequest(request, __reqCtx, _mwCtx) {
         return proxyExternalRequest(request, __fallbackRewritten);
       }
       cleanPathname = __fallbackRewritten;
+      // Check if fallback targets a static file in public/
+      const __fbExtname = __nodePath.extname(cleanPathname);
+      if (__fbExtname && __publicDir !== null) {
+        // "." + cleanPathname: see afterFiles comment above — leading "/" is assumed.
+        const __fbPublicFile = __nodePath.resolve(__publicDir, "." + cleanPathname);
+        if (__fbPublicFile.startsWith(__publicDir + __nodePath.sep)) {
+          try {
+            const __fbStat = __nodeFs.statSync(__fbPublicFile);
+            if (__fbStat.isFile()) {
+              const __fbContent = __nodeFs.readFileSync(__fbPublicFile);
+              const __fbExt = __fbExtname.slice(1).toLowerCase();
+              setHeadersContext(null);
+              setNavigationContext(null);
+              return new Response(__fbContent, { status: 200, headers: { "Content-Type": __mimeTypes[__fbExt] ?? "application/octet-stream" } });
+            }
+          } catch (__e) { if (__e?.code !== 'ENOENT') console.warn('[vinext] static file check failed:', __e); }
+        }
+      }
       match = matchRoute(cleanPathname, routes);
     }
   }
@@ -9556,6 +9724,8 @@ if (import.meta.hot) {
 
 exports[`App Router entry templates > generateRscEntry snapshot (with metadata routes) 1`] = `
 "
+import __nodeFs from "node:fs";
+import __nodePath from "node:path";
 import {
   renderToReadableStream,
   decodeReply,
@@ -10528,6 +10698,8 @@ const __configRedirects = [];
 const __configRewrites = {"beforeFiles":[],"afterFiles":[],"fallback":[]};
 const __configHeaders = [];
 const __allowedOrigins = [];
+const __mimeTypes = {"html":"text/html; charset=utf-8","htm":"text/html; charset=utf-8","css":"text/css","js":"application/javascript","mjs":"application/javascript","cjs":"application/javascript","json":"application/json","txt":"text/plain","xml":"application/xml","svg":"image/svg+xml","png":"image/png","jpg":"image/jpeg","jpeg":"image/jpeg","gif":"image/gif","webp":"image/webp","avif":"image/avif","ico":"image/x-icon","woff":"font/woff","woff2":"font/woff2","ttf":"font/ttf","otf":"font/otf","eot":"application/vnd.ms-fontobject","pdf":"application/pdf","map":"application/json","mp4":"video/mp4","webm":"video/webm","mp3":"audio/mpeg","ogg":"audio/ogg","wasm":"application/wasm"};
+const __publicDir = null;
 
 
 // ── Dev server origin verification ──────────────────────────────────────
@@ -11136,6 +11308,26 @@ async function _handleRequest(request, __reqCtx, _mwCtx) {
         return proxyExternalRequest(request, __afterRewritten);
       }
       cleanPathname = __afterRewritten;
+      // If the rewritten path has a file extension, it may point to a static
+      // file in public/. Serve it directly before route matching.
+      const __afterExtname = __nodePath.extname(cleanPathname);
+      if (__afterExtname && __publicDir !== null) {
+        // "." + cleanPathname works because rewrite destinations always start with "/";
+        // the traversal guard below catches any malformed path regardless.
+        const __afterPublicFile = __nodePath.resolve(__publicDir, "." + cleanPathname);
+        if (__afterPublicFile.startsWith(__publicDir + __nodePath.sep)) {
+          try {
+            const __afterStat = __nodeFs.statSync(__afterPublicFile);
+            if (__afterStat.isFile()) {
+              const __afterContent = __nodeFs.readFileSync(__afterPublicFile);
+              const __afterExt = __afterExtname.slice(1).toLowerCase();
+              setHeadersContext(null);
+              setNavigationContext(null);
+              return new Response(__afterContent, { status: 200, headers: { "Content-Type": __mimeTypes[__afterExt] ?? "application/octet-stream" } });
+            }
+          } catch (__e) { if (__e?.code !== 'ENOENT') console.warn('[vinext] static file check failed:', __e); }
+        }
+      }
     }
   }
 
@@ -11151,6 +11343,24 @@ async function _handleRequest(request, __reqCtx, _mwCtx) {
         return proxyExternalRequest(request, __fallbackRewritten);
       }
       cleanPathname = __fallbackRewritten;
+      // Check if fallback targets a static file in public/
+      const __fbExtname = __nodePath.extname(cleanPathname);
+      if (__fbExtname && __publicDir !== null) {
+        // "." + cleanPathname: see afterFiles comment above — leading "/" is assumed.
+        const __fbPublicFile = __nodePath.resolve(__publicDir, "." + cleanPathname);
+        if (__fbPublicFile.startsWith(__publicDir + __nodePath.sep)) {
+          try {
+            const __fbStat = __nodeFs.statSync(__fbPublicFile);
+            if (__fbStat.isFile()) {
+              const __fbContent = __nodeFs.readFileSync(__fbPublicFile);
+              const __fbExt = __fbExtname.slice(1).toLowerCase();
+              setHeadersContext(null);
+              setNavigationContext(null);
+              return new Response(__fbContent, { status: 200, headers: { "Content-Type": __mimeTypes[__fbExt] ?? "application/octet-stream" } });
+            }
+          } catch (__e) { if (__e?.code !== 'ENOENT') console.warn('[vinext] static file check failed:', __e); }
+        }
+      }
       match = matchRoute(cleanPathname, routes);
     }
   }
@@ -11850,6 +12060,8 @@ if (import.meta.hot) {
 
 exports[`App Router entry templates > generateRscEntry snapshot (with middleware) 1`] = `
 "
+import __nodeFs from "node:fs";
+import __nodePath from "node:path";
 import {
   renderToReadableStream,
   decodeReply,
@@ -12853,6 +13065,8 @@ const __configRedirects = [];
 const __configRewrites = {"beforeFiles":[],"afterFiles":[],"fallback":[]};
 const __configHeaders = [];
 const __allowedOrigins = [];
+const __mimeTypes = {"html":"text/html; charset=utf-8","htm":"text/html; charset=utf-8","css":"text/css","js":"application/javascript","mjs":"application/javascript","cjs":"application/javascript","json":"application/json","txt":"text/plain","xml":"application/xml","svg":"image/svg+xml","png":"image/png","jpg":"image/jpeg","jpeg":"image/jpeg","gif":"image/gif","webp":"image/webp","avif":"image/avif","ico":"image/x-icon","woff":"font/woff","woff2":"font/woff2","ttf":"font/ttf","otf":"font/otf","eot":"application/vnd.ms-fontobject","pdf":"application/pdf","map":"application/json","mp4":"video/mp4","webm":"video/webm","mp3":"audio/mpeg","ogg":"audio/ogg","wasm":"application/wasm"};
+const __publicDir = null;
 
 
 // ── Dev server origin verification ──────────────────────────────────────
@@ -13543,6 +13757,26 @@ async function _handleRequest(request, __reqCtx, _mwCtx) {
         return proxyExternalRequest(request, __afterRewritten);
       }
       cleanPathname = __afterRewritten;
+      // If the rewritten path has a file extension, it may point to a static
+      // file in public/. Serve it directly before route matching.
+      const __afterExtname = __nodePath.extname(cleanPathname);
+      if (__afterExtname && __publicDir !== null) {
+        // "." + cleanPathname works because rewrite destinations always start with "/";
+        // the traversal guard below catches any malformed path regardless.
+        const __afterPublicFile = __nodePath.resolve(__publicDir, "." + cleanPathname);
+        if (__afterPublicFile.startsWith(__publicDir + __nodePath.sep)) {
+          try {
+            const __afterStat = __nodeFs.statSync(__afterPublicFile);
+            if (__afterStat.isFile()) {
+              const __afterContent = __nodeFs.readFileSync(__afterPublicFile);
+              const __afterExt = __afterExtname.slice(1).toLowerCase();
+              setHeadersContext(null);
+              setNavigationContext(null);
+              return new Response(__afterContent, { status: 200, headers: { "Content-Type": __mimeTypes[__afterExt] ?? "application/octet-stream" } });
+            }
+          } catch (__e) { if (__e?.code !== 'ENOENT') console.warn('[vinext] static file check failed:', __e); }
+        }
+      }
     }
   }
 
@@ -13558,6 +13792,24 @@ async function _handleRequest(request, __reqCtx, _mwCtx) {
         return proxyExternalRequest(request, __fallbackRewritten);
       }
       cleanPathname = __fallbackRewritten;
+      // Check if fallback targets a static file in public/
+      const __fbExtname = __nodePath.extname(cleanPathname);
+      if (__fbExtname && __publicDir !== null) {
+        // "." + cleanPathname: see afterFiles comment above — leading "/" is assumed.
+        const __fbPublicFile = __nodePath.resolve(__publicDir, "." + cleanPathname);
+        if (__fbPublicFile.startsWith(__publicDir + __nodePath.sep)) {
+          try {
+            const __fbStat = __nodeFs.statSync(__fbPublicFile);
+            if (__fbStat.isFile()) {
+              const __fbContent = __nodeFs.readFileSync(__fbPublicFile);
+              const __fbExt = __fbExtname.slice(1).toLowerCase();
+              setHeadersContext(null);
+              setNavigationContext(null);
+              return new Response(__fbContent, { status: 200, headers: { "Content-Type": __mimeTypes[__fbExt] ?? "application/octet-stream" } });
+            }
+          } catch (__e) { if (__e?.code !== 'ENOENT') console.warn('[vinext] static file check failed:', __e); }
+        }
+      }
       match = matchRoute(cleanPathname, routes);
     }
   }
@@ -14827,7 +15079,7 @@ if (typeof _instrumentation.onRequestError === "function") {
 const i18nConfig = null;
 
 // Full resolved config for production server (embedded at build time)
-export const vinextConfig = {"basePath":"","trailingSlash":false,"redirects":[{"source":"/old-about","destination":"/about","permanent":true}],"rewrites":{"beforeFiles":[{"source":"/before-rewrite","destination":"/about"},{"source":"/mw-gated-before","has":[{"type":"cookie","key":"mw-before-user"}],"destination":"/about"}],"afterFiles":[{"source":"/after-rewrite","destination":"/about"},{"source":"/mw-gated-rewrite","has":[{"type":"cookie","key":"mw-user"}],"destination":"/about"}],"fallback":[{"source":"/fallback-rewrite","destination":"/about"}]},"headers":[{"source":"/api/(.*)","headers":[{"key":"X-Custom-Header","value":"vinext"}]},{"source":"/about","has":[{"type":"cookie","key":"logged-in"}],"headers":[{"key":"X-Auth-Only-Header","value":"1"}]},{"source":"/about","missing":[{"type":"cookie","key":"logged-in"}],"headers":[{"key":"X-Guest-Only-Header","value":"1"}]},{"source":"/ssr","headers":[{"key":"Vary","value":"Accept-Language"}]}],"i18n":null,"images":{}};
+export const vinextConfig = {"basePath":"","trailingSlash":false,"redirects":[{"source":"/old-about","destination":"/about","permanent":true}],"rewrites":{"beforeFiles":[{"source":"/before-rewrite","destination":"/about"},{"source":"/mw-gated-before","has":[{"type":"cookie","key":"mw-before-user"}],"destination":"/about"}],"afterFiles":[{"source":"/after-rewrite","destination":"/about"},{"source":"/mw-gated-rewrite","has":[{"type":"cookie","key":"mw-user"}],"destination":"/about"},{"source":"/static-html-page","destination":"/static-html-page.html"},{"source":"/auth/no-access","destination":"/auth/no-access.html"}],"fallback":[{"source":"/fallback-rewrite","destination":"/about"},{"source":"/fallback-static-page","destination":"/fallback-page.html"}]},"headers":[{"source":"/api/(.*)","headers":[{"key":"X-Custom-Header","value":"vinext"}]},{"source":"/about","has":[{"type":"cookie","key":"logged-in"}],"headers":[{"key":"X-Auth-Only-Header","value":"1"}]},{"source":"/about","missing":[{"type":"cookie","key":"logged-in"}],"headers":[{"key":"X-Guest-Only-Header","value":"1"}]},{"source":"/ssr","headers":[{"key":"Vary","value":"Accept-Language"}]}],"i18n":null,"images":{}};
 
 // ISR cache helpers (inlined for the server entry)
 async function isrGet(key) {

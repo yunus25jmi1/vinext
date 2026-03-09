@@ -2136,17 +2136,23 @@ export default function vinext(options: VinextOptions = {}): PluginOption[] {
                   const afterFilesPathname = afterRewrite.split("?")[0];
                   if (path.extname(afterFilesPathname)) {
                     // "." + afterFilesPathname works because rewrite destinations always start with "/"
-                    const publicFilePath = path.resolve(resolvedPublicDir, "." + afterFilesPathname);
+                    const publicFilePath = path.resolve(
+                      resolvedPublicDir,
+                      "." + afterFilesPathname,
+                    );
                     try {
                       const stat = fs.statSync(publicFilePath);
                       if (stat.isFile()) {
                         const content = fs.readFileSync(publicFilePath);
-                        const ext = (path.extname(afterFilesPathname).slice(1)).toLowerCase();
+                        const ext = path.extname(afterFilesPathname).slice(1).toLowerCase();
                         res.writeHead(200, { "Content-Type": mimeType(ext) });
                         res.end(content);
                         return;
                       }
-                    } catch (e: any) { if (e?.code !== 'ENOENT') console.warn('[vinext] static file check failed:', e); }
+                    } catch (e: any) {
+                      if (e?.code !== "ENOENT")
+                        console.warn("[vinext] static file check failed:", e);
+                    }
                   }
                 }
               }
@@ -2191,9 +2197,13 @@ export default function vinext(options: VinextOptions = {}): PluginOption[] {
                   if (path.extname(fallbackPathname)) {
                     // "." + fallbackPathname: see afterFiles comment above — leading "/" is assumed
                     const publicFilePath = path.resolve(resolvedPublicDir, "." + fallbackPathname);
-                    if (publicFilePath.startsWith(resolvedPublicDir + path.sep) && fs.existsSync(publicFilePath) && fs.statSync(publicFilePath).isFile()) {
+                    if (
+                      publicFilePath.startsWith(resolvedPublicDir + path.sep) &&
+                      fs.existsSync(publicFilePath) &&
+                      fs.statSync(publicFilePath).isFile()
+                    ) {
                       const content = fs.readFileSync(publicFilePath);
-                      const ext = (path.extname(fallbackPathname).slice(1)).toLowerCase();
+                      const ext = path.extname(fallbackPathname).slice(1).toLowerCase();
                       res.writeHead(200, { "Content-Type": mimeType(ext) });
                       res.end(content);
                       return;
