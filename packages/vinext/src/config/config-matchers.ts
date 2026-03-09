@@ -143,8 +143,8 @@ export function safeRegExp(pattern: string, flags?: string): RegExp | null {
   if (!isSafeRegex(pattern)) {
     console.warn(
       `[vinext] Ignoring potentially unsafe regex pattern (ReDoS risk): ${pattern}\n` +
-      `  Patterns with nested quantifiers (e.g. (a+)+) can cause catastrophic backtracking.\n` +
-      `  Simplify the pattern to avoid nested repetition.`,
+        `  Patterns with nested quantifiers (e.g. (a+)+) can cause catastrophic backtracking.\n` +
+        `  Simplify the pattern to avoid nested repetition.`,
     );
     return null;
   }
@@ -206,11 +206,21 @@ export function escapeHeaderSource(source: string): string {
       }
     } else {
       switch (m[0]) {
-        case ".": result += "\\."; break;
-        case "+": result += "\\+"; break;
-        case "?": result += "\\?"; break;
-        case "*": result += ".*"; break;
-        default: result += m[0]; break;
+        case ".":
+          result += "\\.";
+          break;
+        case "+":
+          result += "\\+";
+          break;
+        case "?":
+          result += "\\?";
+          break;
+        case "*":
+          result += ".*";
+          break;
+        default:
+          result += m[0];
+          break;
       }
     }
   }
@@ -492,9 +502,12 @@ export function matchConfigPattern(
     const paramName = catchAllMatch[1];
     const isPlus = catchAllMatch[2] === "+";
 
-    if (!pathname.startsWith(prefix.replace(/\/$/, ""))) return null;
+    const prefixNoSlash = prefix.replace(/\/$/, "");
+    if (!pathname.startsWith(prefixNoSlash)) return null;
+    const charAfter = pathname[prefixNoSlash.length];
+    if (charAfter !== undefined && charAfter !== "/") return null;
 
-    const rest = pathname.slice(prefix.replace(/\/$/, "").length);
+    const rest = pathname.slice(prefixNoSlash.length);
     if (isPlus && (!rest || rest === "/")) return null;
     let restValue = rest.startsWith("/") ? rest.slice(1) : rest;
     // NOTE: Do NOT decodeURIComponent here. The pathname is already decoded at
@@ -708,7 +721,7 @@ export async function proxyExternalRequest(
   // decompression on the already-decoded body, resulting in
   // ERR_CONTENT_DECODING_FAILED. Strip both headers on Node.js only.
   // On Workers, fetch() preserves wire encoding, so the headers stay accurate.
-  const isNodeRuntime = typeof process !== "undefined" && !!(process.versions?.node);
+  const isNodeRuntime = typeof process !== "undefined" && !!process.versions?.node;
   const responseHeaders = new Headers();
   upstreamResponse.headers.forEach((value, key) => {
     const lower = key.toLowerCase();

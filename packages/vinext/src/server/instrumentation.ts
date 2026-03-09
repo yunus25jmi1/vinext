@@ -15,7 +15,7 @@
  * ## App Router
  *
  * For App Router, `register()` is baked directly into the generated RSC entry
- * as a top-level `await` at module evaluation time (see `app-dev-server.ts`
+ * as a top-level `await` at module evaluation time (see `entries/app-rsc-entry.ts`
  * `generateRscEntry`). This means it runs inside the Worker process (or RSC
  * Vite environment) — the same process that handles requests — before any
  * request is served. `runInstrumentation()` is NOT called from `configureServer`
@@ -129,7 +129,7 @@ export async function runInstrumentation(
   instrumentationPath: string,
 ): Promise<void> {
   try {
-    const mod = await runner.import(instrumentationPath) as Record<string, unknown>;
+    const mod = (await runner.import(instrumentationPath)) as Record<string, unknown>;
 
     // Call register() if exported
     if (typeof mod.register === "function") {
@@ -139,7 +139,7 @@ export async function runInstrumentation(
     // Store onRequestError handler on globalThis so environments can reach the
     // same handler.
     if (typeof mod.onRequestError === "function") {
-			globalThis.__VINEXT_onRequestErrorHandler__ = mod.onRequestError as OnRequestErrorHandler;
+      globalThis.__VINEXT_onRequestErrorHandler__ = mod.onRequestError as OnRequestErrorHandler;
     }
   } catch (err) {
     console.error(
@@ -163,7 +163,7 @@ export async function reportRequestError(
   context: OnRequestErrorContext,
 ): Promise<void> {
   const handler = getOnRequestErrorHandler();
-	if (!handler) return;
+  if (!handler) return;
 
   try {
     await handler(error, request, context);
