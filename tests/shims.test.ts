@@ -8075,12 +8075,15 @@ describe("handleImageOptimization", () => {
     const { handleImageOptimization } =
       await import("../packages/vinext/src/server/image-optimization.js");
     const request = new Request("http://localhost/_vinext/image?url=%2Fimg.jpg&w=800");
+    let fetchCount = 0;
     const handlers = {
-      fetchAsset: async () =>
-        new Response("original", {
+      fetchAsset: async () => {
+        fetchCount += 1;
+        return new Response("original", {
           status: 200,
           headers: { "Content-Type": "image/png" },
-        }),
+        });
+      },
       transformImage: async () => {
         throw new Error("transform failed");
       },
@@ -8088,6 +8091,113 @@ describe("handleImageOptimization", () => {
     const response = await handleImageOptimization(request, handlers);
     expect(response.status).toBe(200);
     expect(await response.text()).toBe("original");
+    expect(fetchCount).toBe(1);
+  });
+
+  it("refetches the source when transform consumes the stream before failing", async () => {
+    const { handleImageOptimization } =
+      await import("../packages/vinext/src/server/image-optimization.js");
+    const request = new Request("http://localhost/_vinext/image?url=%2Fimg.jpg&w=800");
+    let fetchCount = 0;
+    const handlers = {
+      fetchAsset: async () => {
+        fetchCount += 1;
+        return new Response(fetchCount === 1 ? "original" : "refetched", {
+          status: 200,
+          headers: { "Content-Type": "image/png" },
+        });
+      },
+      transformImage: async (body: ReadableStream) => {
+        await new Response(body).arrayBuffer();
+        throw new Error("transform failed after consuming stream");
+      },
+    };
+    const response = await handleImageOptimization(request, handlers);
+    expect(response.status).toBe(200);
+    expect(await response.text()).toBe("refetched");
+    expect(fetchCount).toBe(2);
+  });
+
+  it("uses refetched source headers when consumed transform falls back", async () => {
+    const { handleImageOptimization } =
+      await import("../packages/vinext/src/server/image-optimization.js");
+    const request = new Request("http://localhost/_vinext/image?url=%2Fimg.jpg&w=800");
+    let fetchCount = 0;
+    const handlers = {
+      fetchAsset: async () => {
+        fetchCount += 1;
+        return new Response(fetchCount === 1 ? "original" : "refetched", {
+          status: 200,
+          headers: {
+            "Content-Type": fetchCount === 1 ? "image/png" : "image/jpeg",
+            ETag: fetchCount === 1 ? '"source-etag"' : '"refetched-etag"',
+          },
+        });
+      },
+      transformImage: async (body: ReadableStream) => {
+        await new Response(body).arrayBuffer();
+        throw new Error("transform failed after consuming stream");
+      },
+    };
+    const response = await handleImageOptimization(request, handlers);
+    expect(response.status).toBe(200);
+    expect(fetchCount).toBe(2);
+    expect(response.headers.get("Content-Type")).toBe("image/jpeg");
+    expect(response.headers.get("ETag")).toBe('"refetched-etag"');
+    expect(response.headers.get("Cache-Control")).toBe("public, max-age=31536000, immutable");
+    expect(response.headers.get("Vary")).toBe("Accept");
+  });
+
+  it("returns 404 when refetch fallback cannot reload the source image", async () => {
+    const { handleImageOptimization } =
+      await import("../packages/vinext/src/server/image-optimization.js");
+    const request = new Request("http://localhost/_vinext/image?url=%2Fimg.jpg&w=800");
+    let fetchCount = 0;
+    const handlers = {
+      fetchAsset: async () => {
+        fetchCount += 1;
+        if (fetchCount === 1) {
+          return new Response("original", {
+            status: 200,
+            headers: { "Content-Type": "image/png" },
+          });
+        }
+        return new Response("", { status: 404 });
+      },
+      transformImage: async (body: ReadableStream) => {
+        await new Response(body).arrayBuffer();
+        throw new Error("transform failed after consuming stream");
+      },
+    };
+    const response = await handleImageOptimization(request, handlers);
+    expect(fetchCount).toBe(2);
+    expect(response.status).toBe(404);
+  });
+
+  it("returns 400 when refetch fallback reloads an unsafe content type", async () => {
+    const { handleImageOptimization } =
+      await import("../packages/vinext/src/server/image-optimization.js");
+    const request = new Request("http://localhost/_vinext/image?url=%2Fimg.jpg&w=800");
+    let fetchCount = 0;
+    const handlers = {
+      fetchAsset: async () => {
+        fetchCount += 1;
+        return new Response(fetchCount === 1 ? "original" : "<html>bad</html>", {
+          status: 200,
+          headers: {
+            "Content-Type": fetchCount === 1 ? "image/png" : "text/html",
+          },
+        });
+      },
+      transformImage: async (body: ReadableStream) => {
+        await new Response(body).arrayBuffer();
+        throw new Error("transform failed after consuming stream");
+      },
+    };
+    const response = await handleImageOptimization(request, handlers);
+    expect(fetchCount).toBe(2);
+    expect(response.status).toBe(400);
+    expect(await response.text()).toBe("The requested resource is not an allowed image type");
   });
 
   it("returns 400 for backslash open redirect (/\\evil.com)", async () => {
