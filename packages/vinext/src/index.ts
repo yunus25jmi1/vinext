@@ -1064,6 +1064,7 @@ export default function vinext(options: VinextOptions = {}): PluginOption[] {
           "vinext/fetch-cache": path.join(shimsDir, "fetch-cache"),
           "vinext/cache-runtime": path.join(shimsDir, "cache-runtime"),
           "vinext/navigation-state": path.join(shimsDir, "navigation-state"),
+          "vinext/unified-request-context": path.join(shimsDir, "unified-request-context"),
           "vinext/router-state": path.join(shimsDir, "router-state"),
           "vinext/head-state": path.join(shimsDir, "head-state"),
           "vinext/i18n-state": path.join(shimsDir, "i18n-state"),
