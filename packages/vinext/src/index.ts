@@ -2452,6 +2452,32 @@ export default function vinext(options: VinextOptions = {}): PluginOption[] {
                     await proxyExternalRewriteNode(req, res, fallbackRewrite);
                     return;
                   }
+                  // Check if fallback targets a static file in public/
+                  const fallbackPathname = fallbackRewrite.split("?")[0];
+                  if (path.extname(fallbackPathname)) {
+                    const resolvedPublicDir = path.resolve(root, "public");
+                    const publicFilePath = path.resolve(
+                      resolvedPublicDir,
+                      "." + fallbackPathname,
+                    );
+                    if (
+                      publicFilePath.startsWith(resolvedPublicDir + path.sep)
+                    ) {
+                      try {
+                        const stat = fs.statSync(publicFilePath);
+                        if (stat.isFile()) {
+                          const content = fs.readFileSync(publicFilePath);
+                          const ext = path.extname(fallbackPathname).slice(1).toLowerCase();
+                          res.writeHead(200, { "Content-Type": mimeType(ext) });
+                          res.end(content);
+                          return;
+                        }
+                      } catch (e: any) {
+                        if (e?.code !== "ENOENT")
+                          console.warn("[vinext] static file check failed:", e);
+                      }
+                    }
+                  }
                   const fallbackMatch = matchRoute(fallbackRewrite.split("?")[0], routes);
                   if (!fallbackMatch && hasAppDir) {
                     return next();
