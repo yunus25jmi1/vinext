@@ -13,11 +13,7 @@
  * needed for most Next.js apps.
  */
 
-import vinext, {
-  getClientOutputConfig,
-  getClientTreeshakeConfig,
-  getViteMajorVersion,
-} from "./index.js";
+import vinext, { getClientBuildOptionsWithInput, getViteMajorVersion } from "./index.js";
 import { printBuildReport } from "./build/report.js";
 import path from "node:path";
 import fs from "node:fs";
@@ -390,11 +386,9 @@ async function buildApp() {
             outDir: "dist/client",
             manifest: true,
             ssrManifest: true,
-            rollupOptions: {
-              input: "virtual:vinext-client-entry",
-              output: getClientOutputConfig(viteMajorVersion),
-              treeshake: getClientTreeshakeConfig(viteMajorVersion),
-            },
+            ...getClientBuildOptionsWithInput(viteMajorVersion, {
+              index: "virtual:vinext-client-entry",
+            }),
           },
         },
         logger,

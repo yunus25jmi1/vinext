@@ -489,6 +489,8 @@ function clientManualChunks(id: string): string | undefined {
  * their importers. This reduces HTTP request count and improves gzip
  * compression efficiency — small files restart the compression dictionary,
  * adding ~5-15% wire overhead vs fewer larger chunks.
+ *
+ * @deprecated Use `getClientOutputConfig()` instead — applies version-gated config.
  */
 const clientOutputConfig = {
   manualChunks: clientManualChunks,
@@ -519,6 +521,8 @@ const clientOutputConfig = {
  *   tryCatchDeoptimization: false, which can break specific libraries
  *   that rely on property access side effects or try/catch for feature detection
  * - 'recommended' + 'no-external' gives most of the benefit with less risk
+ *
+ * @deprecated Use `getClientTreeshakeConfig()` instead — applies version-gated config.
  */
 const clientTreeshakeConfig = {
   preset: "recommended" as const,
@@ -529,9 +533,10 @@ const clientTreeshakeConfig = {
  * Get Rollup-compatible output config for client builds.
  * Returns config without Vite 8/Rolldown-incompatible options.
  */
-function getClientOutputConfig(
-  viteVersion: number,
-): typeof clientOutputConfig | { manualChunks: typeof clientManualChunks } {
+function getClientOutputConfig(viteVersion: number): {
+  manualChunks: typeof clientManualChunks;
+  experimentalMinChunkSize?: number;
+} {
   if (viteVersion >= 8) {
     // Vite 8+ uses Rolldown which doesn't support experimentalMinChunkSize
     return {
@@ -546,9 +551,10 @@ function getClientOutputConfig(
  * Get Rollup-compatible treeshake config for client builds.
  * Returns config without Vite 8/Rolldown-incompatible options.
  */
-function getClientTreeshakeConfig(
-  viteVersion: number,
-): typeof clientTreeshakeConfig | { moduleSideEffects: "no-external" } {
+function getClientTreeshakeConfig(viteVersion: number): {
+  preset?: "recommended";
+  moduleSideEffects: "no-external";
+} {
   if (viteVersion >= 8) {
     // Vite 8+ uses Rolldown which doesn't support `preset` option
     // moduleSideEffects is still supported in Rolldown
@@ -558,6 +564,79 @@ function getClientTreeshakeConfig(
   }
   // Vite 7 uses Rollup with preset support
   return clientTreeshakeConfig;
+}
+
+/**
+ * Get build options config for client builds, version-gated for Vite 8/Rolldown.
+ * Vite 7 uses build.rollupOptions, Vite 8+ uses build.rolldownOptions.
+ */
+function getClientBuildOptions(viteVersion: number): {
+  rollupOptions?: {
+    input?: Record<string, string>;
+    output: { manualChunks: typeof clientManualChunks; experimentalMinChunkSize?: number };
+    treeshake: { preset?: "recommended"; moduleSideEffects: "no-external" };
+  };
+  rolldownOptions?: {
+    input?: Record<string, string>;
+    output: { manualChunks: typeof clientManualChunks };
+    treeshake: { moduleSideEffects: "no-external" };
+  };
+} {
+  if (viteVersion >= 8) {
+    // Vite 8+ uses Rolldown - config goes under rolldownOptions
+    return {
+      rolldownOptions: {
+        output: getClientOutputConfig(viteVersion),
+        treeshake: getClientTreeshakeConfig(viteVersion),
+      },
+    };
+  }
+  // Vite 7 uses Rollup - config goes under rollupOptions
+  return {
+    rollupOptions: {
+      output: getClientOutputConfig(viteVersion),
+      treeshake: getClientTreeshakeConfig(viteVersion),
+    },
+  };
+}
+
+/**
+ * Get build options config for client builds with custom input, version-gated for Vite 8/Rolldown.
+ * Vite 7 uses build.rollupOptions, Vite 8+ uses build.rolldownOptions.
+ */
+function getClientBuildOptionsWithInput(
+  viteVersion: number,
+  input: Record<string, string>,
+): {
+  rollupOptions?: {
+    input: Record<string, string>;
+    output: { manualChunks: typeof clientManualChunks; experimentalMinChunkSize?: number };
+    treeshake: { preset?: "recommended"; moduleSideEffects: "no-external" };
+  };
+  rolldownOptions?: {
+    input: Record<string, string>;
+    output: { manualChunks: typeof clientManualChunks };
+    treeshake: { moduleSideEffects: "no-external" };
+  };
+} {
+  if (viteVersion >= 8) {
+    // Vite 8+ uses Rolldown - config goes under rolldownOptions
+    return {
+      rolldownOptions: {
+        input,
+        output: getClientOutputConfig(viteVersion),
+        treeshake: getClientTreeshakeConfig(viteVersion),
+      },
+    };
+  }
+  // Vite 7 uses Rollup - config goes under rollupOptions
+  return {
+    rollupOptions: {
+      input,
+      output: getClientOutputConfig(viteVersion),
+      treeshake: getClientTreeshakeConfig(viteVersion),
+    },
+  };
 }
 
 type BuildManifestChunk = {
@@ -1234,52 +1313,75 @@ export default function vinext(options: VinextOptions = {}): PluginOption[] {
         const viteConfig: UserConfig = {
           // Disable Vite's default HTML serving - we handle all routing
           appType: "custom",
-          build: {
-            rollupOptions: {
-              // Suppress "Module level directives cause errors when bundled"
-              // warnings for "use client" / "use server" directives. Our shims
-              // and third-party libraries legitimately use these directives;
-              // they are handled by the RSC plugin and are harmless in the
-              // final bundle. We preserve any user-supplied onwarn so custom
-              // warning handling is not lost.
-              onwarn: (() => {
-                const userOnwarn = config.build?.rollupOptions?.onwarn;
-                return (warning, defaultHandler) => {
-                  if (
-                    warning.code === "MODULE_LEVEL_DIRECTIVE" &&
-                    (warning.message?.includes('"use client"') ||
-                      warning.message?.includes('"use server"'))
-                  ) {
-                    return;
-                  }
-                  if (userOnwarn) {
-                    userOnwarn(warning, defaultHandler);
-                  } else {
-                    defaultHandler(warning);
-                  }
-                };
-              })(),
-              // Enable aggressive tree-shaking for client builds.
-              // See clientTreeshakeConfig for rationale.
-              // Only apply globally for standalone client builds (Pages Router
-              // CLI). For multi-environment builds (App Router, Cloudflare),
-              // treeshake is set per-environment on the client env below to
-              // avoid leaking into RSC/SSR environments where
-              // moduleSideEffects: 'no-external' could drop server packages
-              // that rely on module-level side effects.
-              ...(!isSSR && !isMultiEnv
-                ? { treeshake: getClientTreeshakeConfig(viteMajorVersion) }
-                : {}),
-              // Code-split client bundles: separate framework (React/ReactDOM),
-              // vinext runtime (shims), and vendor packages into their own
-              // chunks so pages only load the JS they need.
-              // Only apply globally for standalone client builds (CLI Pages
-              // Router). For multi-environment builds (App Router, Cloudflare),
-              // manualChunks is set per-environment on the client env below
-              // to avoid leaking into RSC/SSR environments.
-              ...(!isSSR && !isMultiEnv ? { output: getClientOutputConfig(viteMajorVersion) } : {}),
-            },
-          },
+          // For standalone client builds (Pages Router CLI), apply version-gated
+          // rollup/rolldown options. Vite 7 uses rollupOptions, Vite 8+ uses rolldownOptions.
+          // Multi-environment builds (App Router, Cloudflare) set these per-environment
+          // on the client env below to avoid leaking into RSC/SSR environments.
+          ...(isSSR || isMultiEnv
+            ? {
+                build: {},
+              }
+            : viteMajorVersion >= 8
+              ? {
+                  build: {
+                    rolldownOptions: {
+                      ...getClientBuildOptions(viteMajorVersion).rolldownOptions,
+                      // Suppress "Module level directives cause errors when bundled"
+                      // warnings for "use client" / "use server" directives. Our shims
+                      // and third-party libraries legitimately use these directives;
+                      // they are handled by the RSC plugin and are harmless in the
+                      // final bundle. We preserve any user-supplied onwarn so custom
+                      // warning handling is not lost.
+                      onwarn: (() => {
+                        const userOnwarn = config.build?.rollupOptions?.onwarn;
+                        return (warning: any, defaultHandler: (warning: any) => void) => {
+                          if (
+                            warning.code === "MODULE_LEVEL_DIRECTIVE" &&
+                            (warning.message?.includes('"use client"') ||
+                              warning.message?.includes('"use server"'))
+                          ) {
+                            return;
+                          }
+                          if (userOnwarn) {
+                            userOnwarn(warning, defaultHandler);
+                          } else {
+                            defaultHandler(warning);
+                          }
+                        };
+                      })(),
+                    },
+                  } as any,
+                }
+              : {
+                  build: {
+                    rollupOptions: {
+                      ...getClientBuildOptions(viteMajorVersion).rollupOptions,
+                      // Suppress "Module level directives cause errors when bundled"
+                      // warnings for "use client" / "use server" directives. Our shims
+                      // and third-party libraries legitimately use these directives;
+                      // they are handled by the RSC plugin and are harmless in the
+                      // final bundle. We preserve any user-supplied onwarn so custom
+                      // warning handling is not lost.
+                      onwarn: (() => {
+                        const userOnwarn = config.build?.rollupOptions?.onwarn;
+                        return (warning: any, defaultHandler: (warning: any) => void) => {
+                          if (
+                            warning.code === "MODULE_LEVEL_DIRECTIVE" &&
+                            (warning.message?.includes('"use client"') ||
+                              warning.message?.includes('"use server"'))
+                          ) {
+                            return;
+                          }
+                          if (userOnwarn) {
+                            userOnwarn(warning, defaultHandler);
+                          } else {
+                            defaultHandler(warning);
+                          }
+                        };
+                      })(),
+                    },
+                  },
+                }),
           // Let OPTIONS requests pass through Vite's CORS middleware to our
           // route handlers so they can set the Allow header and run user-defined
           // OPTIONS handlers. Without this, Vite's CORS middleware responds to
@@ -1479,11 +1581,9 @@ export default function vinext(options: VinextOptions = {}): PluginOption[] {
                 // on every page — defeating code-splitting for React.lazy() and
                 // next/dynamic boundaries.
                 ...(hasCloudflarePlugin ? { manifest: true } : {}),
-                rollupOptions: {
-                  input: { index: VIRTUAL_APP_BROWSER_ENTRY },
-                  output: getClientOutputConfig(viteMajorVersion),
-                  treeshake: getClientTreeshakeConfig(viteMajorVersion),
-                },
+                ...getClientBuildOptionsWithInput(viteMajorVersion, {
+                  index: VIRTUAL_APP_BROWSER_ENTRY,
+                }),
               },
             },
           };
@@ -1498,11 +1598,9 @@ export default function vinext(options: VinextOptions = {}): PluginOption[] {
               build: {
                 manifest: true,
                 ssrManifest: true,
-                rollupOptions: {
-                  input: { index: VIRTUAL_CLIENT_ENTRY },
-                  output: getClientOutputConfig(viteMajorVersion),
-                  treeshake: getClientTreeshakeConfig(viteMajorVersion),
-                },
+                ...getClientBuildOptionsWithInput(viteMajorVersion, {
+                  index: VIRTUAL_CLIENT_ENTRY,
+                }),
               },
             },
           };
@@ -3794,6 +3892,8 @@ export {
   clientOutputConfig,
   clientTreeshakeConfig,
   computeLazyChunks,
+  getClientBuildOptions,
+  getClientBuildOptionsWithInput,
   getClientOutputConfig,
   getClientTreeshakeConfig,
 };

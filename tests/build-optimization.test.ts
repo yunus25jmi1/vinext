@@ -383,7 +383,7 @@ describe("treeshake config integration", () => {
       const result = await (mainPlugin as any).config(mockConfig, { command: "build" });
 
       // treeshake should NOT be set for SSR builds
-      expect(result.build.rollupOptions.treeshake).toBeUndefined();
+      expect(result.build.rollupOptions?.treeshake).toBeUndefined();
     } finally {
       await fsp.rm(tmpDir, { recursive: true, force: true }).catch(() => {});
     }
@@ -430,7 +430,7 @@ describe("treeshake config integration", () => {
       const result = await (mainPlugin as any).config(mockConfig, { command: "build" });
 
       // Global rollupOptions should NOT have treeshake (would leak into RSC/SSR)
-      expect(result.build.rollupOptions.treeshake).toBeUndefined();
+      expect(result.build.rollupOptions?.treeshake).toBeUndefined();
 
       // Client environment should have treeshake
       expect(result.environments.client.build.rollupOptions.treeshake).toEqual({
