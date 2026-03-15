@@ -490,9 +490,6 @@ function clientManualChunks(id: string): string | undefined {
  * their importers. This reduces HTTP request count and improves gzip
  * compression efficiency — small files restart the compression dictionary,
  * adding ~5-15% wire overhead vs fewer larger chunks.
- *
- * Note: experimentalMinChunkSize is a Rollup-only feature (Vite 7).
- * Vite 8+ uses Rolldown which doesn't support this option.
  */
 const clientOutputConfig = {
   manualChunks: clientManualChunks,
@@ -523,45 +520,11 @@ const clientOutputConfig = {
  *   tryCatchDeoptimization: false, which can break specific libraries
  *   that rely on property access side effects or try/catch for feature detection
  * - 'recommended' + 'no-external' gives most of the benefit with less risk
- *
- * Note: The `preset` option is Rollup-only (Vite 7).
- * Vite 8+ uses Rolldown which has different treeshake options.
  */
 const clientTreeshakeConfig = {
   preset: "recommended" as const,
   moduleSideEffects: "no-external" as const,
 };
-
-/**
- * Get Rollup-compatible output config for client builds.
- * Returns config without Vite 8/Rolldown-incompatible options.
- */
-function getClientOutputConfig(viteVersion: number) {
-  if (viteVersion >= 8) {
-    // Vite 8+ uses Rolldown which doesn't support experimentalMinChunkSize
-    return {
-      manualChunks: clientManualChunks,
-    };
-  }
-  // Vite 7 uses Rollup with experimentalMinChunkSize support
-  return clientOutputConfig;
-}
-
-/**
- * Get Rollup-compatible treeshake config for client builds.
- * Returns config without Vite 8/Rolldown-incompatible options.
- */
-function getClientTreeshakeConfig(viteVersion: number) {
-  if (viteVersion >= 8) {
-    // Vite 8+ uses Rolldown which doesn't support `preset` option
-    // moduleSideEffects is still supported in Rolldown
-    return {
-      moduleSideEffects: "no-external" as const,
-    };
-  }
-  // Vite 7 uses Rollup with preset support
-  return clientTreeshakeConfig;
-}
 
 type BuildManifestChunk = {
   file: string;
@@ -1270,9 +1233,7 @@ export default function vinext(options: VinextOptions = {}): PluginOption[] {
               // avoid leaking into RSC/SSR environments where
               // moduleSideEffects: 'no-external' could drop server packages
               // that rely on module-level side effects.
-              ...(!isSSR && !isMultiEnv
-                ? { treeshake: getClientTreeshakeConfig(viteMajorVersion) }
-                : {}),
+              ...(!isSSR && !isMultiEnv ? { treeshake: clientTreeshakeConfig } : {}),
               // Code-split client bundles: separate framework (React/ReactDOM),
               // vinext runtime (shims), and vendor packages into their own
               // chunks so pages only load the JS they need.
@@ -1280,7 +1241,7 @@ export default function vinext(options: VinextOptions = {}): PluginOption[] {
               // Router). For multi-environment builds (App Router, Cloudflare),
               // manualChunks is set per-environment on the client env below
               // to avoid leaking into RSC/SSR environments.
-              ...(!isSSR && !isMultiEnv ? { output: getClientOutputConfig(viteMajorVersion) } : {}),
+              ...(!isSSR && !isMultiEnv ? { output: clientOutputConfig } : {}),
             },
           },
           // Let OPTIONS requests pass through Vite's CORS middleware to our
@@ -1477,15 +1438,15 @@ export default function vinext(options: VinextOptions = {}): PluginOption[] {
                 // When targeting Cloudflare Workers, enable manifest generation
                 // so the vinext:cloudflare-build closeBundle hook can read the
                 // client build manifest, compute lazy chunks (only reachable
-                // via dynamic imports), and inject __VINETT_LAZY_CHUNKS__ into
+                // via dynamic imports), and inject __VINEXT_LAZY_CHUNKS__ into
                 // the worker entry. Without this, all chunks are modulepreloaded
                 // on every page — defeating code-splitting for React.lazy() and
                 // next/dynamic boundaries.
                 ...(hasCloudflarePlugin ? { manifest: true } : {}),
                 rollupOptions: {
                   input: { index: VIRTUAL_APP_BROWSER_ENTRY },
-                  output: getClientOutputConfig(viteMajorVersion),
-                  treeshake: getClientTreeshakeConfig(viteMajorVersion),
+                  output: clientOutputConfig,
+                  treeshake: clientTreeshakeConfig,
                 },
               },
             },
@@ -1503,8 +1464,8 @@ export default function vinext(options: VinextOptions = {}): PluginOption[] {
                 ssrManifest: true,
                 rollupOptions: {
                   input: { index: VIRTUAL_CLIENT_ENTRY },
-                  output: getClientOutputConfig(viteMajorVersion),
-                  treeshake: getClientTreeshakeConfig(viteMajorVersion),
+                  output: clientOutputConfig,
+                  treeshake: clientTreeshakeConfig,
                 },
               },
             },
@@ -3853,14 +3814,7 @@ export type {
 export type { NextConfig } from "./config/next-config.js";
 
 // Exported for CLI and testing
-export {
-  clientManualChunks,
-  clientOutputConfig,
-  clientTreeshakeConfig,
-  computeLazyChunks,
-  getClientOutputConfig,
-  getClientTreeshakeConfig,
-};
+export { clientManualChunks, clientOutputConfig, clientTreeshakeConfig, computeLazyChunks };
 export { augmentSsrManifestFromBundle as _augmentSsrManifestFromBundle };
 export { resolvePostcssStringPlugins as _resolvePostcssStringPlugins };
 export { _postcssCache };
