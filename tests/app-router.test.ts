@@ -1,12 +1,12 @@
-import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
-import { createBuilder, createServer, type ViteDevServer } from "vite";
-import path from "node:path";
 import fs from "node:fs";
 import os from "node:os";
+import path from "node:path";
 import zlib from "node:zlib";
-import vinext from "../packages/vinext/src/index.js";
-import { APP_FIXTURE_DIR, RSC_ENTRIES, startFixtureServer, fetchHtml } from "./helpers.js";
+import { createBuilder, createServer, type ViteDevServer } from "vite";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { generateRscEntry } from "../packages/vinext/src/entries/app-rsc-entry.js";
+import vinext from "../packages/vinext/src/index.js";
+import { APP_FIXTURE_DIR, fetchHtml, RSC_ENTRIES, startFixtureServer } from "./helpers.js";
 
 describe("App Router integration", () => {
   let server: ViteDevServer;
@@ -62,6 +62,16 @@ describe("App Router integration", () => {
     const html = await res.text();
     expect(html).toContain("Blog Post");
     expect(html).toContain("hello-world");
+  });
+
+  it("does not collapse encoded slashes onto nested routes in dev", async () => {
+    const encodedRes = await fetch(`${baseUrl}/headers%2Foverride-from-middleware`);
+    expect(encodedRes.status).toBe(404);
+    expect(encodedRes.headers.get("e2e-headers")).not.toBe("middleware");
+
+    const nestedRes = await fetch(`${baseUrl}/headers/override-from-middleware`);
+    expect(nestedRes.status).toBe(200);
+    expect(nestedRes.headers.get("e2e-headers")).toBe("middleware");
   });
 
   it("handles GET API route handlers", async () => {
@@ -131,6 +141,21 @@ describe("App Router integration", () => {
     expect(html).toContain("Count:");
     expect(html).toContain("0");
     expect(html).toContain("Increment");
+  });
+
+  // Verifies that "use client" modules from packages with internal submodules
+  // (re-exported through the package entry) share the same module instance in
+  // the browser. Without the client-reference-dedup plugin, the RSC proxy
+  // imports from the raw file path while client code uses pre-bundled deps,
+  // causing React context providers to be duplicated (createContext runs twice).
+  it("renders context provider/consumer from package with internal 'use client' submodule", async () => {
+    const { res, html } = await fetchHtml(baseUrl, "/context-dedup-test");
+    expect(res.status).toBe(200);
+    expect(html).toContain("Context Dedup Test");
+    // If module dedup is working, the consumer reads the provider's value.
+    // If broken, useContext returns null and we see "NOT_FOUND".
+    expect(html).toContain("dark-test-theme");
+    expect(html).not.toContain("NOT_FOUND");
   });
 
   it("SSR renders 'use client' components that use usePathname/useSearchParams", async () => {
@@ -381,11 +406,9 @@ describe("App Router integration", () => {
   it("returns Method Not Allowed for unsupported HTTP methods on route handlers", async () => {
     const res = await fetch(`${baseUrl}/api/hello`, { method: "DELETE" });
     expect(res.status).toBe(405);
-    // Should include Allow header listing supported methods
+    // Next.js does not emit an Allow header on 405 responses
     const allow = res.headers.get("allow");
-    expect(allow).toBeTruthy();
-    expect(allow).toContain("GET");
-    expect(allow).toContain("POST");
+    expect(allow).toBeNull();
     // Body should be empty for 405
     const body = await res.text();
     expect(body).toBe("");
@@ -405,10 +428,7 @@ describe("App Router integration", () => {
     const res = await fetch(`${baseUrl}/api/get-only`, { method: "OPTIONS" });
     expect(res.status).toBe(204);
     const allow = res.headers.get("allow");
-    expect(allow).toBeTruthy();
-    expect(allow).toContain("GET");
-    expect(allow).toContain("HEAD");
-    expect(allow).toContain("OPTIONS");
+    expect(allow).toBe("GET, HEAD, OPTIONS");
     // Body should be empty
     const body = await res.text();
     expect(body).toBe("");
@@ -418,11 +438,7 @@ describe("App Router integration", () => {
     const res = await fetch(`${baseUrl}/api/hello`, { method: "OPTIONS" });
     expect(res.status).toBe(204);
     const allow = res.headers.get("allow");
-    expect(allow).toBeTruthy();
-    expect(allow).toContain("GET");
-    expect(allow).toContain("POST");
-    expect(allow).toContain("HEAD");
-    expect(allow).toContain("OPTIONS");
+    expect(allow).toBe("GET, HEAD, OPTIONS, POST");
   });
 
   it("returns 500 with empty body when route handler throws", async () => {
@@ -463,6 +479,12 @@ describe("App Router integration", () => {
     expect(res.status).toBe(200);
     const data = await res.json();
     expect(data).toEqual({ id: "99", name: "Widget" });
+  });
+
+  it("ignores default export route handlers and returns 405", async () => {
+    const res = await fetch(`${baseUrl}/api/invalid-default`);
+    expect(res.status).toBe(405);
+    expect(res.headers.get("allow")).toBeNull();
   });
 
   it("cookies().set() in route handler produces Set-Cookie headers", async () => {
@@ -1053,24 +1075,29 @@ describe("App Router integration", () => {
     expect(html).not.toContain("Enter a search term");
   });
 
-  it("sets optimizeDeps.entries for rsc and ssr environments so deps are discovered at startup", () => {
+  it("sets optimizeDeps.entries for rsc, ssr, and client environments so deps are discovered at startup", () => {
     // Without optimizeDeps.entries, Vite only crawls build.rollupOptions.input
     // for dependency discovery — but those are virtual modules that don't
     // import user dependencies. This causes lazy discovery, re-optimisation
     // cascades, and "Invalid hook call" errors on first load.
     const rscEntries = server.config.environments.rsc?.optimizeDeps?.entries;
     const ssrEntries = server.config.environments.ssr?.optimizeDeps?.entries;
+    const clientEntries = server.config.environments.client?.optimizeDeps?.entries;
 
     expect(rscEntries).toBeDefined();
     expect(ssrEntries).toBeDefined();
+    expect(clientEntries).toBeDefined();
     expect(Array.isArray(rscEntries)).toBe(true);
     expect(Array.isArray(ssrEntries)).toBe(true);
+    expect(Array.isArray(clientEntries)).toBe(true);
 
     // Entries should include a glob pattern that covers app/ source files
     const rscGlob = (rscEntries as string[]).join(",");
     const ssrGlob = (ssrEntries as string[]).join(",");
+    const clientGlob = (clientEntries as string[]).join(",");
     expect(rscGlob).toMatch(/app\/\*\*\/\*\.\{tsx,ts,jsx,js\}/);
     expect(ssrGlob).toMatch(/app\/\*\*\/\*\.\{tsx,ts,jsx,js\}/);
+    expect(clientGlob).toMatch(/app\/\*\*\/\*\.\{tsx,ts,jsx,js\}/);
   });
 
   it("pre-includes framework dependencies in optimizeDeps.include to avoid late discovery", () => {
@@ -1432,6 +1459,14 @@ describe("App Router Production server (startProdServer)", () => {
   let server: import("node:http").Server;
   let baseUrl: string;
 
+  function extractRequestId(html: string): string | undefined {
+    return (
+      html.match(
+        /data-testid="request-id"[^>]*>(?:<!--.*?-->)*RequestID:\s*(?:<!--.*?-->)*([a-z0-9]+)/,
+      )?.[1] ?? html.match(/request-id[^>]*>[^<]*?([a-z0-9]{6,})/)?.[1]
+    );
+  }
+
   beforeAll(async () => {
     // Build the app-basic fixture to the default dist/ directory
     const builder = await createBuilder({
@@ -1462,6 +1497,16 @@ describe("App Router Production server (startProdServer)", () => {
     const html = await res.text();
     expect(html).toContain("Welcome to App Router");
     expect(html).toContain("<script");
+  });
+
+  it("does not collapse encoded slashes onto nested routes in production", async () => {
+    const encodedRes = await fetch(`${baseUrl}/headers%2Foverride-from-middleware`);
+    expect(encodedRes.status).toBe(404);
+    expect(encodedRes.headers.get("e2e-headers")).not.toBe("middleware");
+
+    const nestedRes = await fetch(`${baseUrl}/headers/override-from-middleware`);
+    expect(nestedRes.status).toBe(200);
+    expect(nestedRes.headers.get("e2e-headers")).toBe("middleware");
   });
 
   it("serves dynamic routes", async () => {
@@ -1582,6 +1627,242 @@ describe("App Router Production server (startProdServer)", () => {
     expect(res.status).toBe(400);
     const body = await res.text();
     expect(body).toContain("Bad Request");
+  });
+
+  it("revalidateTag invalidates App Router ISR page entries by fetch tag", async () => {
+    const res1 = await fetch(`${baseUrl}/revalidate-tag-test`);
+    expect(res1.status).toBe(200);
+    const html1 = await res1.text();
+    const reqId1 = extractRequestId(html1);
+    expect(reqId1).toBeTruthy();
+
+    const res2 = await fetch(`${baseUrl}/revalidate-tag-test`);
+    expect(res2.status).toBe(200);
+    const html2 = await res2.text();
+    const reqId2 = extractRequestId(html2);
+    expect(reqId2).toBe(reqId1);
+    expect(res2.headers.get("x-vinext-cache")).toBe("HIT");
+
+    const tagRes = await fetch(`${baseUrl}/api/revalidate-tag`);
+    expect(tagRes.status).toBe(200);
+    expect(await tagRes.text()).toBe("ok");
+
+    const res3 = await fetch(`${baseUrl}/revalidate-tag-test`);
+    expect(res3.status).toBe(200);
+    const html3 = await res3.text();
+    const reqId3 = extractRequestId(html3);
+    expect(reqId3).toBeTruthy();
+    expect(reqId3).not.toBe(reqId1);
+    expect(res3.headers.get("x-vinext-cache")).toBe("MISS");
+  });
+
+  it("revalidatePath invalidates App Router ISR page entries by path tag", async () => {
+    const res1 = await fetch(`${baseUrl}/revalidate-tag-test`);
+    expect(res1.status).toBe(200);
+    const html1 = await res1.text();
+    const reqId1 = extractRequestId(html1);
+    expect(reqId1).toBeTruthy();
+
+    const res2 = await fetch(`${baseUrl}/revalidate-tag-test`);
+    expect(res2.status).toBe(200);
+    const html2 = await res2.text();
+    const reqId2 = extractRequestId(html2);
+    expect(reqId2).toBe(reqId1);
+    expect(res2.headers.get("x-vinext-cache")).toBe("HIT");
+
+    const pathRes = await fetch(`${baseUrl}/api/revalidate-path`);
+    expect(pathRes.status).toBe(200);
+    expect(await pathRes.text()).toBe("ok");
+
+    const res3 = await fetch(`${baseUrl}/revalidate-tag-test`);
+    expect(res3.status).toBe(200);
+    const html3 = await res3.text();
+    const reqId3 = extractRequestId(html3);
+    expect(reqId3).toBeTruthy();
+    expect(reqId3).not.toBe(reqId1);
+    expect(res3.headers.get("x-vinext-cache")).toBe("MISS");
+  });
+
+  // Route handler ISR caching tests
+  // These tests are ORDER-DEPENDENT: they share a single production server and
+  // /api/static-data cache state persists across tests. HIT depends on MISS
+  // having run first, STALE re-warms explicitly. Take care when adding new tests.
+  // Fixture: /api/static-data exports revalidate = 1 and returns { timestamp: Date.now() }
+  it("route handler ISR: first GET returns MISS", async () => {
+    const res = await fetch(`${baseUrl}/api/static-data`);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("x-vinext-cache")).toBe("MISS");
+  });
+
+  it("route handler ISR: second GET returns cached response (HIT)", async () => {
+    // First request populates cache
+    const res1 = await fetch(`${baseUrl}/api/static-data`);
+    const body1 = await res1.json();
+    expect(res1.status).toBe(200);
+
+    // Second request should be a cache hit with identical response
+    const res2 = await fetch(`${baseUrl}/api/static-data`);
+    const body2 = await res2.json();
+    expect(res2.status).toBe(200);
+    expect(body2.timestamp).toBe(body1.timestamp);
+    expect(res2.headers.get("x-vinext-cache")).toBe("HIT");
+  });
+
+  it("route handler ISR: POST bypasses cache", async () => {
+    // POST should never be cached even with revalidate set on GET
+    const res = await fetch(`${baseUrl}/api/static-data`, { method: "POST" });
+    // /api/static-data only exports GET, POST should be 405
+    expect(res.status).toBe(405);
+    expect(res.headers.get("x-vinext-cache")).toBeNull();
+  });
+
+  it("route handler ISR: dynamic handler (reads headers()) is not cached", async () => {
+    // /api/dynamic-request-data exports revalidate=60 but reads headers() and cookies()
+    const res1 = await fetch(`${baseUrl}/api/dynamic-request-data`, {
+      headers: { "x-test-ping": "a" },
+    });
+    const res2 = await fetch(`${baseUrl}/api/dynamic-request-data`, {
+      headers: { "x-test-ping": "b" },
+    });
+    // Dynamic usage should prevent ISR caching
+    expect(res1.headers.get("x-vinext-cache")).toBeNull();
+    expect(res2.headers.get("x-vinext-cache")).toBeNull();
+  });
+
+  it("route handler ISR: handler-set Cache-Control skips ISR caching", async () => {
+    // /api/custom-cache exports revalidate=60 but sets its own Cache-Control
+    const res1 = await fetch(`${baseUrl}/api/custom-cache`);
+    const res2 = await fetch(`${baseUrl}/api/custom-cache`);
+    // Handler controls caching — ISR should not interfere
+    expect(res1.headers.get("x-vinext-cache")).toBeNull();
+    expect(res2.headers.get("x-vinext-cache")).toBeNull();
+  });
+
+  it("route handler ISR: force-dynamic handler is not cached", async () => {
+    // /api/force-dynamic-revalidate exports revalidate=60 AND dynamic="force-dynamic"
+    const res1 = await fetch(`${baseUrl}/api/force-dynamic-revalidate`);
+    const res2 = await fetch(`${baseUrl}/api/force-dynamic-revalidate`);
+    expect(res1.headers.get("x-vinext-cache")).toBeNull();
+    expect(res2.headers.get("x-vinext-cache")).toBeNull();
+  });
+
+  it("route handler ISR: STALE serves stale data and triggers background regen", async () => {
+    // /api/static-data has revalidate=1
+    // Cache may already be warm from earlier tests — ensure we have a known timestamp
+    const warm = await fetch(`${baseUrl}/api/static-data`);
+    const warmBody = await warm.json();
+    const cachedTimestamp = warmBody.timestamp;
+
+    // Wait for cache entry to become stale (revalidate=1, generous margin for slow CI)
+    await new Promise((resolve) => setTimeout(resolve, 2000));
+
+    // STALE — serves stale data, triggers background regen
+    const staleRes = await fetch(`${baseUrl}/api/static-data`);
+    expect(staleRes.headers.get("x-vinext-cache")).toBe("STALE");
+    const staleBody = await staleRes.json();
+    expect(staleBody.timestamp).toBe(cachedTimestamp); // Still the old data
+
+    // Poll until background regen completes (up to 5s)
+    const deadline = Date.now() + 5000;
+    let freshRes: Response;
+    let freshBody: { timestamp: number };
+    do {
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      freshRes = await fetch(`${baseUrl}/api/static-data`);
+      freshBody = await freshRes.json();
+    } while (freshRes.headers.get("x-vinext-cache") !== "HIT" && Date.now() < deadline);
+
+    // HIT — fresh data from background regen
+    expect(freshRes.headers.get("x-vinext-cache")).toBe("HIT");
+    expect(freshBody.timestamp).not.toBe(cachedTimestamp); // New data
+  });
+
+  it("route handler ISR: auto-HEAD returns cached headers with empty body", async () => {
+    // Ensure cache is warm
+    const getRes = await fetch(`${baseUrl}/api/static-data`);
+    await getRes.text();
+    const cacheHeader = getRes.headers.get("x-vinext-cache");
+    expect(cacheHeader === "MISS" || cacheHeader === "HIT" || cacheHeader === "STALE").toBe(true);
+
+    // HEAD against a GET-only route should return cached headers, no body
+    const headRes = await fetch(`${baseUrl}/api/static-data`, { method: "HEAD" });
+    expect(headRes.status).toBe(200);
+    expect(headRes.headers.get("x-vinext-cache")).toBe("HIT");
+    const body = await headRes.text();
+    expect(body).toBe("");
+  });
+});
+
+describe("App Router Production server worker entry compatibility", () => {
+  it("accepts Worker-style default exports from dist/server/index.js", async () => {
+    const outDir = fs.mkdtempSync(path.join(os.tmpdir(), "vinext-prod-worker-entry-"));
+    const serverDir = path.join(outDir, "server");
+    fs.mkdirSync(serverDir, { recursive: true });
+    fs.mkdirSync(path.join(outDir, "client"), { recursive: true });
+    fs.writeFileSync(path.join(outDir, "package.json"), JSON.stringify({ type: "module" }));
+    fs.writeFileSync(
+      path.join(serverDir, "index.js"),
+      `
+export default {
+  async fetch(request, _env, ctx) {
+    ctx?.waitUntil(Promise.resolve("background"));
+    return new Response(
+      JSON.stringify({
+        pathname: new URL(request.url).pathname,
+        hasWaitUntil: typeof ctx?.waitUntil === "function",
+      }),
+      { headers: { "content-type": "application/json" } },
+    );
+  },
+};
+`,
+    );
+
+    const { startProdServer } = await import("../packages/vinext/src/server/prod-server.js");
+    const server = await startProdServer({ port: 0, outDir, noCompression: true });
+    const addr = server.address();
+    const port = typeof addr === "object" && addr ? addr.port : 0;
+
+    try {
+      const res = await fetch(`http://localhost:${port}/worker-test`);
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({
+        pathname: "/worker-test",
+        hasWaitUntil: true,
+      });
+    } finally {
+      server.close();
+      fs.rmSync(outDir, { recursive: true, force: true });
+    }
+  });
+
+  it("reports a clear error for unsupported app router entry shapes", async () => {
+    const outDir = fs.mkdtempSync(path.join(os.tmpdir(), "vinext-prod-worker-invalid-"));
+    const serverDir = path.join(outDir, "server");
+    fs.mkdirSync(serverDir, { recursive: true });
+    fs.writeFileSync(path.join(outDir, "package.json"), JSON.stringify({ type: "module" }));
+    fs.writeFileSync(path.join(serverDir, "index.js"), "export default {};\n");
+
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((
+      code?: string | number | null,
+    ) => {
+      throw new Error(`process.exit(${code})`);
+    }) as never);
+
+    try {
+      const { startProdServer } = await import("../packages/vinext/src/server/prod-server.js");
+      await expect(startProdServer({ port: 0, outDir, noCompression: true })).rejects.toThrow(
+        "process.exit(1)",
+      );
+      expect(errorSpy).toHaveBeenCalledWith(
+        "[vinext] App Router entry must export either a default handler function or a Worker-style default export with fetch()",
+      );
+    } finally {
+      errorSpy.mockRestore();
+      exitSpy.mockRestore();
+      fs.rmSync(outDir, { recursive: true, force: true });
+    }
   });
 });
 
@@ -1706,6 +1987,7 @@ describe("App Router Static export", () => {
         unauthorizedPath: null,
         isDynamic: true,
         params: ["id"],
+        patternParts: ["fake", ":id"],
       },
     ];
     const config = await resolveNextConfig({ output: "export" });
@@ -1752,6 +2034,7 @@ describe("App Router Static export", () => {
         unauthorizedPath: null,
         isDynamic: false,
         params: [],
+        patternParts: ["api", "test"],
       },
     ];
     const config = await resolveNextConfig({ output: "export" });
@@ -1795,8 +2078,17 @@ describe("metadata routes integration (App Router)", () => {
     expect(res.headers.get("content-type")).toContain("application/xml");
     const xml = await res.text();
     expect(xml).toContain("<urlset");
+    expect(xml).toContain('xmlns:image="http://www.google.com/schemas/sitemap-image/1.1"');
+    expect(xml).toContain('xmlns:video="http://www.google.com/schemas/sitemap-video/1.1"');
+    expect(xml).toContain('xmlns:xhtml="http://www.w3.org/1999/xhtml"');
     expect(xml).toContain("https://example.com");
     expect(xml).toContain("https://example.com/about");
+    expect(xml).toContain(
+      '<xhtml:link rel="alternate" hreflang="fr" href="https://example.com/fr" />',
+    );
+    expect(xml).toContain("<image:loc>https://example.com/image.jpg</image:loc>");
+    expect(xml).toContain("<video:title>Homepage Video</video:title>");
+    expect(xml).toContain("<video:content_loc>https://example.com/video.mp4</video:content_loc>");
   });
 
   it("serves /robots.txt from dynamic robots.ts", async () => {
@@ -1911,6 +2203,93 @@ describe("metadata routes integration (App Router)", () => {
     expect(magic[2]).toBe(0x01);
     expect(magic[3]).toBe(0x00);
   });
+
+  // generateSitemaps() support — paginated sitemaps at /products/sitemap/{id}.xml
+  it("serves /products/sitemap/0.xml from generateSitemaps", async () => {
+    const res = await fetch(`${baseUrl}/products/sitemap/0.xml`);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toContain("application/xml");
+    const xml = await res.text();
+    expect(xml).toContain("<urlset");
+    expect(xml).toContain("https://example.com/products/batch-0/item-1");
+    expect(xml).toContain("https://example.com/products/batch-0/item-2");
+    // Should NOT contain entries from other batches
+    expect(xml).not.toContain("batch-1");
+  });
+
+  it("serves /products/sitemap/1.xml with distinct entries", async () => {
+    const res = await fetch(`${baseUrl}/products/sitemap/1.xml`);
+    expect(res.status).toBe(200);
+    const xml = await res.text();
+    expect(xml).toContain("https://example.com/products/batch-1/item-1");
+    expect(xml).toContain("https://example.com/products/batch-1/item-2");
+    expect(xml).not.toContain("batch-0");
+  });
+
+  // Ported from Next.js: test/e2e/app-dir/metadata-dynamic-routes/index.test.ts
+  // "Should 404 when missing .xml extension"
+  it("returns 404 for sitemap id without .xml extension", async () => {
+    const res = await fetch(`${baseUrl}/products/sitemap/0`);
+    expect(res.status).toBe(404);
+  });
+
+  it("serves /products/sitemap/featured.xml with string id", async () => {
+    const res = await fetch(`${baseUrl}/products/sitemap/featured.xml`);
+    expect(res.status).toBe(200);
+    const xml = await res.text();
+    expect(xml).toContain("https://example.com/products/batch-featured/item-1");
+    expect(xml).toContain("https://example.com/products/batch-featured/item-2");
+  });
+
+  it("returns 404 for invalid sitemap id", async () => {
+    const res = await fetch(`${baseUrl}/products/sitemap/99.xml`);
+    expect(res.status).toBe(404);
+  });
+
+  it("does not serve /products/sitemap.xml when generateSitemaps exists", async () => {
+    const res = await fetch(`${baseUrl}/products/sitemap.xml`);
+    // The base URL should not match — either 404 or falls through to page routing
+    expect(res.status).toBe(404);
+  });
+
+  it("scanMetadataFiles discovers nested products/sitemap.ts", async () => {
+    const { scanMetadataFiles } = await import("../packages/vinext/src/server/metadata-routes.js");
+    const appDir = path.resolve(import.meta.dirname, "./fixtures/app-basic/app");
+    const routes = scanMetadataFiles(appDir);
+    const productsSitemap = routes.find(
+      (r: { type: string; servedUrl: string }) =>
+        r.type === "sitemap" && r.servedUrl === "/products/sitemap.xml",
+    );
+    expect(productsSitemap).toBeDefined();
+    expect(productsSitemap!.isDynamic).toBe(true);
+  });
+
+  it("scanMetadataFiles discovers opengraph-image in dynamic segment", async () => {
+    const { scanMetadataFiles } = await import("../packages/vinext/src/server/metadata-routes.js");
+    const appDir = path.resolve(import.meta.dirname, "./fixtures/app-basic/app");
+    const routes = scanMetadataFiles(appDir);
+    const ogImage = routes.find(
+      (r: { type: string; servedUrl: string }) =>
+        r.type === "opengraph-image" && r.servedUrl === "/blog/[slug]/opengraph-image",
+    );
+    expect(ogImage).toBeDefined();
+    expect(ogImage!.isDynamic).toBe(true);
+  });
+
+  it("serves dynamic opengraph-image in dynamic segment with params", async () => {
+    const res = await fetch(`${baseUrl}/blog/hello-world/opengraph-image`);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toContain("image/png");
+    const text = await res.text();
+    expect(text).toBe("og:hello-world");
+  });
+
+  it("serves dynamic opengraph-image with different param values", async () => {
+    const res = await fetch(`${baseUrl}/blog/my-post/opengraph-image`);
+    expect(res.status).toBe(200);
+    const text = await res.text();
+    expect(text).toBe("og:my-post");
+  });
 });
 
 describe("App Router next.config.js features (dev server integration)", () => {
@@ -1940,11 +2319,25 @@ describe("App Router next.config.js features (dev server integration)", () => {
     expect(res.headers.get("location")).toContain("/blog/hello");
   });
 
+  it("applies redirects with repeated dynamic params in the destination", async () => {
+    const res = await fetch(`${baseUrl}/repeat-redirect/hello`, { redirect: "manual" });
+    expect(res.status).toBe(307);
+    expect(res.headers.get("location")).toContain("/blog/hello/hello");
+  });
+
   it("applies beforeFiles rewrites from next.config.js", async () => {
     const res = await fetch(`${baseUrl}/rewrite-about`);
     expect(res.status).toBe(200);
     const html = await res.text();
     expect(html).toContain("About");
+  });
+
+  it("applies rewrites with repeated dynamic params in the destination", async () => {
+    const res = await fetch(`${baseUrl}/repeat-rewrite/hello`);
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toContain("hello/hello");
+    expect(html).toMatch(/Segments:.*2/);
   });
 
   it("applies afterFiles rewrites from next.config.js", async () => {
@@ -2019,6 +2412,22 @@ describe("App Router next.config.js features (dev server integration)", () => {
     expect(res.headers.get("content-type")).toMatch(/text\/html/i);
   });
 
+  it("fallback rewrites targeting Pages routes still work in mixed app/pages projects", async () => {
+    const noAuthRes = await fetch(`${baseUrl}/mw-gated-fallback-pages`);
+    expect(noAuthRes.status).toBe(404);
+
+    const { res, html } = await fetchHtml(`${baseUrl}`, "/mw-gated-fallback-pages?mw-auth", {
+      headers: {
+        authorization: "Bearer secret",
+        cookie: "a=1; b=2",
+      },
+    });
+
+    expect(res.status).toBe(200);
+    expect(html).toContain("Pages Header Override Delete");
+    expect(html).toContain('"page":"/pages-header-override-delete"');
+  });
+
   it("applies custom headers from next.config.js on API routes", async () => {
     const res = await fetch(`${baseUrl}/api/hello`);
     expect(res.headers.get("x-custom-header")).toBe("vinext-app");
@@ -2048,6 +2457,11 @@ describe("App Router next.config.js features (dev server integration)", () => {
     // /%61bout decodes to /about → X-Page-Header: about-page
     const res = await fetch(`${baseUrl}/%61bout`);
     expect(res.headers.get("x-page-header")).toBe("about-page");
+  });
+
+  it("encoded slashes stay within a single segment for config header matching", async () => {
+    const res = await fetch(`${baseUrl}/api%2Fhello`);
+    expect(res.headers.get("x-custom-header")).toBeNull();
   });
 
   it("percent-encoded rewrite path is decoded before config matching", async () => {
@@ -2231,6 +2645,24 @@ describe("App Router next.config.js features (generateRscEntry)", () => {
     expect(code).toContain("must export a function named");
   });
 
+  it("propagates middleware waitUntil promises to the Workers execution context", () => {
+    const code = generateRscEntry(
+      "/tmp/test/app",
+      minimalRoutes,
+      "/tmp/middleware.ts",
+      [],
+      null,
+      "",
+      false,
+    );
+    // drainWaitUntil() must be registered with the execution context so
+    // Workers keeps the isolate alive for background promises.
+    expect(code).toContain("_getRequestExecutionContext()");
+    expect(code).toContain("waitUntil");
+    // Must NOT discard the drainWaitUntil() return value
+    expect(code).not.toMatch(/^\s*mwFetchEvent\.drainWaitUntil\(\);$/m);
+  });
+
   it("applies redirects before middleware in the handler", () => {
     const code = generateRscEntry("/tmp/test/app", minimalRoutes, null, [], null, "", false, {
       redirects: [{ source: "/old", destination: "/new", permanent: true }],
@@ -2373,7 +2805,8 @@ describe("App Router next.config.js features (generateRscEntry)", () => {
     });
     // Generated code should prepend basePath to redirect destination
     expect(code).toContain("__basePath");
-    expect(code).toContain("__redir.destination.startsWith(__basePath)");
+    expect(code).toContain("!isExternalUrl(__redir.destination)");
+    expect(code).toContain("hasBasePath(__redir.destination, __basePath)");
   });
 
   it("generates CSRF origin validation code for server actions", () => {
@@ -2647,6 +3080,28 @@ describe("App Router middleware with NextRequest", () => {
     expect(res.headers.get("x-mw-has-session")).toBe("true");
   });
 
+  it("object-form matcher requires has and missing conditions", async () => {
+    const noHeaderRes = await fetch(`${baseUrl}/mw-object-gated`);
+    expect(noHeaderRes.status).toBe(200);
+    expect(noHeaderRes.headers.get("x-mw-ran")).toBeNull();
+
+    const blockedRes = await fetch(`${baseUrl}/mw-object-gated`, {
+      headers: {
+        "x-mw-allow": "1",
+        Cookie: "mw-blocked=1",
+      },
+    });
+    expect(blockedRes.status).toBe(200);
+    expect(blockedRes.headers.get("x-mw-ran")).toBeNull();
+
+    const allowedRes = await fetch(`${baseUrl}/mw-object-gated`, {
+      headers: { "x-mw-allow": "1" },
+    });
+    expect(allowedRes.status).toBe(200);
+    expect(allowedRes.headers.get("x-mw-ran")).toBe("true");
+    expect(allowedRes.headers.get("x-mw-pathname")).toBe("/mw-object-gated");
+  });
+
   it("middleware can redirect using NextRequest", async () => {
     const res = await fetch(`${baseUrl}/middleware-redirect`, { redirect: "manual" });
     expect(res.status).toBe(307);
@@ -2671,6 +3126,50 @@ describe("App Router middleware with NextRequest", () => {
   it("middleware that throws returns 500 instead of bypassing", async () => {
     const res = await fetch(`${baseUrl}/middleware-throw`);
     expect(res.status).toBe(500);
+  });
+
+  it("middleware request header overrides can delete credential headers before rendering", async () => {
+    // Ported from Next.js: test/e2e/middleware-request-header-overrides/test/index.test.ts
+    // https://github.com/vercel/next.js/blob/canary/test/e2e/middleware-request-header-overrides/test/index.test.ts
+    const { res, html } = await fetchHtml(baseUrl, "/header-override-delete", {
+      headers: {
+        authorization: "Bearer secret",
+        cookie: "a=1; b=2",
+      },
+    });
+
+    expect(res.status).toBe(200);
+    expect(html).toContain('id="authorization">null<');
+    expect(html).toContain('id="cookie">null<');
+    expect(html).toContain('id="middleware-header">hello-from-middleware<');
+    expect(html).toContain('id="cookie-count">0<');
+  });
+
+  it("middleware request header overrides can delete credential headers before pages getServerSideProps in mixed projects", async () => {
+    const { res, html } = await fetchHtml(baseUrl, "/pages-header-override-delete", {
+      headers: {
+        authorization: "Bearer secret",
+        cookie: "a=1; b=2",
+      },
+    });
+
+    expect(res.status).toBe(200);
+    expect(html).toContain("Pages Header Override Delete");
+    expect(html).toContain('<p id="authorization"></p>');
+    expect(html).toContain('<p id="cookie"></p>');
+    expect(html).toContain('id="middleware-header">hello-from-middleware<');
+    expect(html).toContain('"authorization":null');
+    expect(html).toContain('"cookie":null');
+  });
+
+  it("middleware rewrite preserves query params from the rewrite URL", async () => {
+    // Middleware rewrites /middleware-rewrite-query → /search-query?searchParams=from-rewrite&extra=injected
+    // The rewrite URL's query string must be visible to the target page.
+    const res = await fetch(`${baseUrl}/middleware-rewrite-query`);
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    // The /search-query page renders searchParams from props
+    expect(html).toContain("from-rewrite");
   });
 
   it("does not leak x-middleware-next or x-middleware-rewrite headers to the client", async () => {
@@ -2927,7 +3426,7 @@ describe("RSC plugin auto-registration", () => {
     ).rejects.toThrow("Duplicate @vitejs/plugin-rsc detected");
   }, 30000);
 
-  it("auto-injects RSC plugin when src/app exists but root-level app/ does not", () => {
+  it("auto-injects RSC plugin when src/app exists but root-level app/ does not", async () => {
     // Regression test: the early detection path (before config()) must check
     // both {base}/app and {base}/src/app to match the full config() logic.
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "vinext-src-app-"));
@@ -2946,39 +3445,60 @@ describe("RSC plugin auto-registration", () => {
         "junction",
       );
 
-      const plugins = vinext({ appDir: tmpDir });
+      const plugins = vinext({ appDir: tmpDir, react: false });
 
-      // When auto-RSC fires, the returned array includes a Promise<Plugin[]>
-      // for the lazily-loaded @vitejs/plugin-rsc. Verify it's present.
-      const hasRscPromise = plugins.some((p) => p && typeof (p as any).then === "function");
-      expect(hasRscPromise).toBe(true);
+      const resolvedPlugins = (
+        await Promise.all(
+          plugins.map(async (plugin) => {
+            if (plugin && typeof (plugin as any).then === "function") {
+              return await (plugin as Promise<any>);
+            }
+            return plugin;
+          }),
+        )
+      ).flat();
+
+      const hasRscPlugin = resolvedPlugins.some((p) => p && (p as any).name === "rsc");
+      expect(hasRscPlugin).toBe(true);
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
   });
 
-  it("does NOT auto-inject RSC plugin when neither app/ nor src/app/ exists", () => {
+  it("does NOT auto-inject RSC plugin when neither app/ nor src/app/ exists", async () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "vinext-no-app-"));
     try {
       // Empty directory — no app/ or src/app/.
-      const plugins = vinext({ appDir: tmpDir });
+      const plugins = vinext({ appDir: tmpDir, react: false });
 
-      const hasRscPromise = plugins.some((p) => p && typeof (p as any).then === "function");
-      expect(hasRscPromise).toBe(false);
+      const resolvedPlugins = (
+        await Promise.all(
+          plugins.map(async (plugin) => {
+            if (plugin && typeof (plugin as any).then === "function") {
+              return await (plugin as Promise<any>);
+            }
+            return plugin;
+          }),
+        )
+      ).flat();
+
+      const hasRscPlugin = resolvedPlugins.some((p) => p && (p as any).name === "rsc");
+      expect(hasRscPlugin).toBe(false);
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
   });
 });
 
-// ── External rewrite proxy credential stripping (App Router) ─────────────────
+// ── External rewrite proxy credential forwarding (App Router) ────────────────
 // Regression test: the proxyExternalRequest (imported from config-matchers) in the generated RSC entry
-// must strip Cookie, Authorization, x-api-key, proxy-authorization, and
+// must forward credential headers like Next.js while still stripping
 // x-middleware-* headers before forwarding to external rewrite destinations.
-describe("App Router external rewrite proxy credential stripping", () => {
+describe("App Router external rewrite proxy credential forwarding", () => {
   let mockServer: import("node:http").Server;
   let mockPort: number;
   let capturedHeaders: import("node:http").IncomingHttpHeaders | null = null;
+  let capturedUrl: URL | null = null;
   let mockResponseMode: "plain" | "gzipHeaderAndBody" = "plain";
   let server: ViteDevServer;
   let baseUrl: string;
@@ -2988,6 +3508,7 @@ describe("App Router external rewrite proxy credential stripping", () => {
     const http = await import("node:http");
     mockServer = http.createServer((req, res) => {
       capturedHeaders = req.headers;
+      capturedUrl = new URL(req.url ?? "/", `http://localhost:${mockPort || 80}`);
       if (mockResponseMode === "gzipHeaderAndBody") {
         const payload = "proxied gzipped body";
         const gzipped = zlib.gzipSync(Buffer.from(payload));
@@ -3020,9 +3541,10 @@ describe("App Router external rewrite proxy credential stripping", () => {
     await new Promise<void>((resolve) => mockServer?.close(() => resolve()));
   });
 
-  it("forwards credential headers through proxied requests to external rewrite targets", async () => {
+  it("forwards credential headers and strips x-middleware-* headers from proxied requests to external rewrite targets", async () => {
     mockResponseMode = "plain";
     capturedHeaders = null;
+    capturedUrl = null;
 
     await fetch(`${baseUrl}/proxy-external-test/some-path`, {
       headers: {
@@ -3036,7 +3558,7 @@ describe("App Router external rewrite proxy credential stripping", () => {
     });
 
     expect(capturedHeaders).not.toBeNull();
-    // Credential headers must be forwarded (matching Next.js behavior)
+    // Credential headers must be forwarded to match Next.js external rewrite proxying.
     expect(capturedHeaders!["cookie"]).toBe("session=secret123");
     expect(capturedHeaders!["authorization"]).toBe("Bearer tok_secret");
     expect(capturedHeaders!["x-api-key"]).toBe("sk_live_secret");
@@ -3047,6 +3569,21 @@ describe("App Router external rewrite proxy credential stripping", () => {
     expect(capturedHeaders!["x-custom-safe"]).toBe("keep-me");
   });
 
+  it("preserves repeated query params when proxying to external rewrite targets", async () => {
+    mockResponseMode = "plain";
+    capturedHeaders = null;
+    capturedUrl = null;
+
+    const response = await fetch(`${baseUrl}/proxy-external-test/some-path?a=1&a=2&b=3`);
+    expect(response.status).toBe(200);
+    expect(capturedUrl).not.toBeNull();
+    expect([...capturedUrl!.searchParams.entries()]).toEqual([
+      ["a", "1"],
+      ["a", "2"],
+      ["b", "3"],
+    ]);
+  });
+
   it("strips content-encoding and content-length for Node fetch auto-decompression", async () => {
     mockResponseMode = "gzipHeaderAndBody";
     const response = await fetch(`${baseUrl}/proxy-external-test/some-path`);
@@ -3055,5 +3592,209 @@ describe("App Router external rewrite proxy credential stripping", () => {
     expect(response.headers.get("content-length")).toBeNull();
     expect(response.headers.get("x-custom")).toBe("keep-me");
     expect(await response.text()).toBe("proxied gzipped body");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// generateRscEntry — ISR code generation assertions
+// ---------------------------------------------------------------------------
+
+describe("generateRscEntry ISR code generation", () => {
+  // Minimal route list — only the generated ISR guard logic matters here
+  const minimalRoutes = [
+    {
+      pattern: "/",
+      pagePath: "/tmp/test/app/page.tsx",
+      routePath: null,
+      layouts: ["/tmp/test/app/layout.tsx"],
+      templates: [],
+      parallelSlots: [],
+      loadingPath: null,
+      errorPath: null,
+      layoutErrorPaths: [null],
+      notFoundPath: null,
+      forbiddenPath: null,
+      unauthorizedPath: null,
+      routeSegments: [],
+      layoutTreePositions: [0],
+      isDynamic: false,
+      params: [],
+    },
+  ] as any[];
+
+  it('generated code contains process.env.NODE_ENV === "production" guard for ISR cache read', () => {
+    const code = generateRscEntry("/tmp/test/app", minimalRoutes);
+    expect(code).toContain('process.env.NODE_ENV === "production"');
+  });
+
+  it("generated code contains ISR inline helper functions", () => {
+    const code = generateRscEntry("/tmp/test/app", minimalRoutes);
+    expect(code).toContain("async function __isrGet(");
+    expect(code).toContain("async function __isrSet(");
+    expect(code).toContain("function __triggerBackgroundRegeneration(");
+    expect(code).toContain("function __isrCacheKey(");
+    expect(code).toContain("const __pendingRegenerations = new Map()");
+  });
+
+  it("generated code threads collected fetch tags into page ISR writes", () => {
+    const code = generateRscEntry("/tmp/test/app", minimalRoutes);
+    expect(code).toContain("getCollectedFetchTags");
+    expect(code).toContain("function __pageCacheTags(pathname, extraTags)");
+    expect(code).toContain('const tags = [pathname, "_N_T_" + pathname]');
+    expect(code).toContain(
+      "const __pageTags = __pageCacheTags(cleanPathname, getCollectedFetchTags())",
+    );
+    expect(code).toContain("Array.isArray(tags) ? tags : []");
+  });
+
+  it("generated handler exports async function handler(request, ctx)", () => {
+    const code = generateRscEntry("/tmp/test/app", minimalRoutes);
+    // The handler must accept a ctx param so ExecutionContext is threaded through
+    expect(code).toMatch(/export default async function handler\s*\(\s*request\s*,\s*ctx\s*\)/);
+  });
+
+  it("generated code imports getCacheHandler from next/cache", () => {
+    const code = generateRscEntry("/tmp/test/app", minimalRoutes);
+    expect(code).toContain("getCacheHandler");
+    expect(code).toContain('"next/cache"');
+  });
+
+  it("generated code emits X-Vinext-Cache: MISS header on first render", () => {
+    const code = generateRscEntry("/tmp/test/app", minimalRoutes);
+    expect(code).toContain('"X-Vinext-Cache": "MISS"');
+  });
+
+  it("generated code emits X-Vinext-Cache: HIT header on cache hits", () => {
+    const code = generateRscEntry("/tmp/test/app", minimalRoutes);
+    expect(code).toContain('"X-Vinext-Cache": "HIT"');
+  });
+
+  it("generated code emits X-Vinext-Cache: STALE header on stale hits", () => {
+    const code = generateRscEntry("/tmp/test/app", minimalRoutes);
+    expect(code).toContain('"X-Vinext-Cache": "STALE"');
+  });
+
+  it("generated code uses request execution context for background cache write", () => {
+    const code = generateRscEntry("/tmp/test/app", minimalRoutes);
+    expect(code).toContain("_getRequestExecutionContext()?.waitUntil");
+  });
+
+  it("generated code tees the RSC stream to capture rscData for cache", () => {
+    const code = generateRscEntry("/tmp/test/app", minimalRoutes);
+    // There must be at least two .tee() calls:
+    //  1) RSC stream tee (before SSR) to capture rscData
+    //  2) HTML response stream tee (to collect html while streaming to client)
+    const teeCount = (code.match(/\.tee\(\)/g) || []).length;
+    expect(teeCount).toBeGreaterThanOrEqual(2);
+  });
+
+  it("generated code stores rscData in the ISR cache entry", () => {
+    const code = generateRscEntry("/tmp/test/app", minimalRoutes);
+    // The HTML-path cache write must include rscData (not always undefined)
+    expect(code).toContain("rscData: __rscData");
+    // Background regen must also store rscData
+    expect(code).toContain("rscData: __freshRscData");
+  });
+
+  it("generated code writes RSC-first partial cache entry on RSC MISS", () => {
+    const code = generateRscEntry("/tmp/test/app", minimalRoutes);
+    // The RSC-path cache write must store rscData with html:"" as a partial entry.
+    // This lets subsequent RSC requests hit cache immediately without waiting
+    // for an HTML request to come in and populate a complete entry.
+    expect(code).toContain('html: ""');
+    // The RSC write must use __isrKeyRsc / __rscDataForCache variable names
+    expect(code).toContain("__rscDataForCache");
+    expect(code).toContain("__isrKeyRsc");
+  });
+
+  it("generated code treats html:'' partial entries as MISS for HTML requests", () => {
+    const code = generateRscEntry("/tmp/test/app", minimalRoutes);
+    // The ISR read block must check __hasHtml before returning an HTML HIT,
+    // so that a partial entry (html:"") falls through to render.
+    expect(code).toContain("__hasHtml");
+    // Must also check __hasRsc before returning an RSC HIT
+    expect(code).toContain("__hasRsc");
+    // HTML requests must only return HIT when __hasHtml is true.
+    // Slice from the ISR cache read comment to the main render call.
+    // Use "element = await buildPageElement" (the main page render, not the fn def or regen call).
+    const isrReadBlock = code.slice(
+      code.indexOf("ISR cache read"),
+      code.indexOf("element = await buildPageElement"),
+    );
+    expect(isrReadBlock.length).toBeGreaterThan(0);
+    expect(isrReadBlock).toContain("if (isRscRequest && __hasRsc)");
+    expect(isrReadBlock).toContain("if (!isRscRequest && __hasHtml)");
+  });
+
+  it("generated code serves cached rscData for RSC requests on HIT", () => {
+    const code = generateRscEntry("/tmp/test/app", minimalRoutes);
+    // ISR read block must return rscData for RSC requests
+    expect(code).toContain("rscData");
+    expect(code).toContain("text/x-component");
+    // The ISR read block must have an explicit RSC hit path (not just an HTML path)
+    const isrReadBlock = code.slice(
+      code.indexOf("ISR cache read"),
+      code.indexOf("element = await buildPageElement"),
+    );
+    expect(isrReadBlock.length).toBeGreaterThan(0);
+    // Must serve RSC from cache using isRscRequest guard
+    expect(isrReadBlock).toContain("if (isRscRequest && __hasRsc)");
+    // Must NOT use the old bare !isRscRequest guard (HTML-only serving without data check)
+    expect(isrReadBlock).not.toContain("if (!isRscRequest) {");
+  });
+
+  it("ISR cache read fires before buildPageElement (early return on HIT)", () => {
+    const code = generateRscEntry("/tmp/test/app", minimalRoutes);
+    // The ISR read block must appear before the main 'buildPageElement' render call.
+    // Use "element = await buildPageElement" to target the main call, not the fn definition.
+    const isrReadIdx = code.indexOf("__isrGet(");
+    const buildPageIdx = code.indexOf("element = await buildPageElement");
+    expect(isrReadIdx).toBeGreaterThan(-1);
+    expect(buildPageIdx).toBeGreaterThan(-1);
+    expect(isrReadIdx).toBeLessThan(buildPageIdx);
+  });
+
+  it("ISR cache read fires before generateStaticParams (skips expensive work on HIT)", () => {
+    const code = generateRscEntry("/tmp/test/app", minimalRoutes);
+    // The ISR read block must appear before the generateStaticParams call so that
+    // a cache hit skips the potentially-expensive static params validation entirely.
+    const isrReadIdx = code.indexOf("__isrGet(");
+    const gspIdx = code.indexOf("generateStaticParams(");
+    expect(isrReadIdx).toBeGreaterThan(-1);
+    expect(gspIdx).toBeGreaterThan(-1);
+    expect(isrReadIdx).toBeLessThan(gspIdx);
+  });
+
+  it("RSC stream tee for rscData capture happens before the RSC response is returned", () => {
+    const code = generateRscEntry("/tmp/test/app", minimalRoutes);
+    // __rscForResponse must be assigned before the RSC response is returned so
+    // the tee branch (__rscB) is also consumed (populating the ISR cache).
+    // The RSC response is: new Response(__rscForResponse, ...)
+    const teeAssignIdx = code.indexOf("let __rscForResponse");
+    const rscResponseIdx = code.indexOf("return new Response(__rscForResponse");
+    expect(teeAssignIdx).toBeGreaterThan(-1);
+    expect(rscResponseIdx).toBeGreaterThan(-1);
+    expect(teeAssignIdx).toBeLessThan(rscResponseIdx);
+  });
+
+  // Route handler ISR code generation tests
+  it("generated code contains __isrRouteKey helper", () => {
+    const code = generateRscEntry("/tmp/test/app", minimalRoutes);
+    expect(code).toContain("__isrRouteKey");
+  });
+
+  it("generated code contains APP_ROUTE ISR cache read for route handlers", () => {
+    const code = generateRscEntry("/tmp/test/app", minimalRoutes);
+    expect(code).toContain('"APP_ROUTE"');
+    // Route handler ISR uses __isrRouteKey to build the cache key, then reads via __isrGet
+    expect(code).toContain("__isrRouteKey(cleanPathname)");
+    expect(code).toContain("__isrGet(__routeKey)");
+  });
+
+  it("generated code contains APP_ROUTE ISR cache write for route handlers", () => {
+    const code = generateRscEntry("/tmp/test/app", minimalRoutes);
+    // Route handler ISR writes use __isrSet with __routeKey and APP_ROUTE kind
+    expect(code).toContain("__isrSet(__routeKey,");
+    expect(code).toContain('kind: "APP_ROUTE"');
   });
 });

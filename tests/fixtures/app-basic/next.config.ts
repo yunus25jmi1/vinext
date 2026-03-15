@@ -28,6 +28,12 @@ const nextConfig: NextConfig = {
         destination: "/blog/:slug",
         permanent: false,
       },
+      // Used by Vitest: app-router.test.ts — repeated param substitution
+      {
+        source: "/repeat-redirect/:id",
+        destination: "/blog/:id/:id",
+        permanent: false,
+      },
       // Used by E2E: config-redirect.spec.ts (permanent → 308)
       {
         source: "/config-redirect-source",
@@ -68,6 +74,11 @@ const nextConfig: NextConfig = {
       beforeFiles: [
         // Used by Vitest: app-router.test.ts
         { source: "/rewrite-about", destination: "/about" },
+        // Used by Vitest: app-router.test.ts — repeated param substitution
+        {
+          source: "/repeat-rewrite/:slug",
+          destination: "/docs/:slug/:slug",
+        },
         // Used by Vitest: app-router.test.ts (external proxy credential stripping)
         // Only active when TEST_EXTERNAL_PROXY_TARGET env var is set.
         ...(process.env.TEST_EXTERNAL_PROXY_TARGET
@@ -109,6 +120,13 @@ const nextConfig: NextConfig = {
         },
         // Used by Vitest: app-router.test.ts (fallback rewrite to static HTML in public/)
         { source: "/fallback-static-page", destination: "/fallback-page.html" },
+        // Used by Vitest: app-router.test.ts — mixed app/pages fallback rewrite
+        // gated on a middleware-injected cookie, targeting a Pages route.
+        {
+          source: "/mw-gated-fallback-pages",
+          has: [{ type: "cookie", key: "mw-pages-fallback-user" }],
+          destination: "/pages-header-override-delete",
+        },
       ],
     };
   },
