@@ -1,7 +1,9 @@
 import { describe, it, expect, afterEach } from "vitest";
 import path from "node:path";
 import fs from "node:fs";
-import vinext, { _parseStaticObjectLiteral as parseStaticObjectLiteral } from "../packages/vinext/src/index.js";
+import vinext, {
+  _parseStaticObjectLiteral as parseStaticObjectLiteral,
+} from "../packages/vinext/src/index.js";
 import type { Plugin } from "vite";
 
 // ── Helpers ───────────────────────────────────────────────────
@@ -616,7 +618,9 @@ describe("parseStaticObjectLiteral", () => {
   // ── Security: these must all return null ──
 
   it("rejects function calls (code execution)", () => {
-    const result = parseStaticObjectLiteral(`{ weight: require('child_process').execSync('whoami') }`);
+    const result = parseStaticObjectLiteral(
+      `{ weight: require('child_process').execSync('whoami') }`,
+    );
     expect(result).toBeNull();
   });
 

@@ -3828,9 +3828,7 @@ describe("next/form shim", () => {
 
 describe("next/font/google shim", () => {
   it("returns className, style, and variable for a Google Font", async () => {
-    const { createFontLoader } = await import(
-      "../packages/vinext/src/shims/font-google.js"
-    );
+    const { createFontLoader } = await import("../packages/vinext/src/shims/font-google.js");
     const Inter = createFontLoader("Inter");
     const result = Inter({ subsets: ["latin"], weight: ["400", "700"] });
 
@@ -3842,9 +3840,7 @@ describe("next/font/google shim", () => {
   });
 
   it("Proxy returns font loaders for any family", async () => {
-    const mod = await import(
-      "../packages/vinext/src/shims/font-google.js"
-    );
+    const mod = await import("../packages/vinext/src/shims/font-google.js");
     const googleFonts = mod.default;
     const loader = googleFonts.Poppins;
     expect(typeof loader).toBe("function");
@@ -3855,9 +3851,7 @@ describe("next/font/google shim", () => {
   });
 
   it("converts PascalCase to font family name", async () => {
-    const mod = await import(
-      "../packages/vinext/src/shims/font-google.js"
-    );
+    const mod = await import("../packages/vinext/src/shims/font-google.js");
     const googleFonts = mod.default;
     const result = googleFonts.RobotoMono({ weight: "400" });
 
@@ -3867,9 +3861,7 @@ describe("next/font/google shim", () => {
   });
 
   it("uses custom variable name when provided", async () => {
-    const { createFontLoader } = await import(
-      "../packages/vinext/src/shims/font-google.js"
-    );
+    const { createFontLoader } = await import("../packages/vinext/src/shims/font-google.js");
     const Inter = createFontLoader("Inter");
     const result = Inter({ variable: "--custom-font" });
     // When custom variable is provided, the generated class still sets that variable
@@ -3878,9 +3870,7 @@ describe("next/font/google shim", () => {
   });
 
   it("uses custom fallback fonts", async () => {
-    const { createFontLoader } = await import(
-      "../packages/vinext/src/shims/font-google.js"
-    );
+    const { createFontLoader } = await import("../packages/vinext/src/shims/font-google.js");
     const Inter = createFontLoader("Inter");
     const result = Inter({ fallback: ["Helvetica", "Arial", "sans-serif"] });
     expect(result.style.fontFamily).toContain("Helvetica");
@@ -3888,9 +3878,8 @@ describe("next/font/google shim", () => {
   });
 
   it("generates CSS rules for className (SSR)", async () => {
-    const { createFontLoader, getSSRFontStyles } = await import(
-      "../packages/vinext/src/shims/font-google.js"
-    );
+    const { createFontLoader, getSSRFontStyles } =
+      await import("../packages/vinext/src/shims/font-google.js");
     // Clear any previously collected styles
     getSSRFontStyles();
 
@@ -3906,9 +3895,8 @@ describe("next/font/google shim", () => {
   });
 
   it("generates CSS variable rule when variable is specified", async () => {
-    const { createFontLoader, getSSRFontStyles } = await import(
-      "../packages/vinext/src/shims/font-google.js"
-    );
+    const { createFontLoader, getSSRFontStyles } =
+      await import("../packages/vinext/src/shims/font-google.js");
     getSSRFontStyles(); // clear
 
     const Inter = createFontLoader("Inter");

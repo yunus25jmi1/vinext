@@ -2374,15 +2374,23 @@ export default function vinext(options: VinextOptions = {}): PluginOption[] {
           // Merge specifiers from all matched imports
           const rawSpecifiers: string[] = [];
           for (const m of importMatches) {
-            rawSpecifiers.push(...m[1].split(",").map((spec) => spec.trim()).filter(Boolean));
+            rawSpecifiers.push(
+              ...m[1]
+                .split(",")
+                .map((spec) => spec.trim())
+                .filter(Boolean),
+            );
           }
 
           // Utility exports that are NOT font names — keep as regular imports.
           // IMPORTANT: keep this set in sync with the non-default exports from
           // packages/vinext/src/shims/font-google.ts (and its re-export barrel).
           const utilityExports = new Set([
-            "buildGoogleFontsUrl", "getSSRFontLinks", "getSSRFontStyles",
-            "getSSRFontPreloads", "createFontLoader",
+            "buildGoogleFontsUrl",
+            "getSSRFontLinks",
+            "getSSRFontStyles",
+            "getSSRFontPreloads",
+            "createFontLoader",
           ]);
 
           const typeSpecifiers: string[] = [];
@@ -2428,11 +2436,13 @@ export default function vinext(options: VinextOptions = {}): PluginOption[] {
           ];
           const newImport = `import { ${newSpecifiers.join(", ")} } from 'next/font/google';`;
 
-          const fontDecls = fontImports.map((f) => {
-            // Derive font family name: underscores → spaces (e.g. Roboto_Mono → Roboto Mono)
-            const family = f.imported.replace(/_/g, " ");
-            return `const ${f.local} = /*#__PURE__*/ __vinext_clf(${JSON.stringify(family)});`;
-          }).join("\n");
+          const fontDecls = fontImports
+            .map((f) => {
+              // Derive font family name: underscores → spaces (e.g. Roboto_Mono → Roboto Mono)
+              const family = f.imported.replace(/_/g, " ");
+              return `const ${f.local} = /*#__PURE__*/ __vinext_clf(${JSON.stringify(family)});`;
+            })
+            .join("\n");
 
           // Track all overwritten import regions so the self-hosting pass can
           // skip font constructor calls that overlap with them (avoids MagicString
@@ -2478,7 +2488,8 @@ export default function vinext(options: VinextOptions = {}): PluginOption[] {
               // NOTE: Skipped fonts will still work but load from CDN instead of being self-hosted.
               const callStart = callMatch.index;
               const callEnd = callStart + fullCallMatch.length;
-              if (overwrittenRanges.some(([start, end]) => callStart < end && callEnd > start)) continue;
+              if (overwrittenRanges.some(([start, end]) => callStart < end && callEnd > start))
+                continue;
 
               // Find the matching font import to derive the family name
               const fontSpec = fontImports.find((f) => f.local === fontName);
@@ -2500,10 +2511,14 @@ export default function vinext(options: VinextOptions = {}): PluginOption[] {
 
               // Build the Google Fonts CSS URL
               const weights = options.weight
-                ? Array.isArray(options.weight) ? options.weight : [options.weight]
+                ? Array.isArray(options.weight)
+                  ? options.weight
+                  : [options.weight]
                 : [];
               const styles = options.style
-                ? Array.isArray(options.style) ? options.style : [options.style]
+                ? Array.isArray(options.style)
+                  ? options.style
+                  : [options.style]
                 : [];
               const display = options.display ?? "swap";
 
@@ -2512,7 +2527,10 @@ export default function vinext(options: VinextOptions = {}): PluginOption[] {
                 const hasItalic = styles.includes("italic");
                 if (hasItalic) {
                   const pairs: string[] = [];
-                  for (const w of weights) { pairs.push(`0,${w}`); pairs.push(`1,${w}`); }
+                  for (const w of weights) {
+                    pairs.push(`0,${w}`);
+                    pairs.push(`1,${w}`);
+                  }
                   spec += `:ital,wght@${pairs.join(";")}`;
                 } else {
                   spec += `:wght@${weights.join(";")}`;
@@ -2544,7 +2562,8 @@ export default function vinext(options: VinextOptions = {}): PluginOption[] {
               const matchEnd = matchStart + fullCallMatch.length;
               const escapedCSS = JSON.stringify(localCSS);
               const closingBrace = optionsStr.lastIndexOf("}");
-              const optionsWithCSS = optionsStr.slice(0, closingBrace) +
+              const optionsWithCSS =
+                optionsStr.slice(0, closingBrace) +
                 (optionsStr.slice(0, closingBrace).trim().endsWith("{") ? "" : ", ") +
                 `_selfHostedCSS: ${escapedCSS}` +
                 optionsStr.slice(closingBrace);

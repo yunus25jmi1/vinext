@@ -418,19 +418,16 @@ export function createFontLoader(family: string): FontLoader {
 // Export a Proxy that creates font loaders for any Google Font family.
 // Usage: import { Inter } from 'next/font/google'
 // The proxy intercepts property access and returns a loader for that font.
-const googleFonts = new Proxy(
-  {} as Record<string, (options?: FontOptions) => FontResult>,
-  {
-    get(_target, prop: string) {
-      if (prop === "__esModule") return true;
-      if (prop === "default") return googleFonts;
-      // Convert export-style names to proper font family names:
-      // - Underscores to spaces: "Roboto_Mono" -> "Roboto Mono"
-      // - PascalCase to spaces:  "RobotoMono"  -> "Roboto Mono"
-      const family = prop.replace(/_/g, " ").replace(/([a-z])([A-Z])/g, "$1 $2");
-      return createFontLoader(family);
-    },
+const googleFonts = new Proxy({} as Record<string, (options?: FontOptions) => FontResult>, {
+  get(_target, prop: string) {
+    if (prop === "__esModule") return true;
+    if (prop === "default") return googleFonts;
+    // Convert export-style names to proper font family names:
+    // - Underscores to spaces: "Roboto_Mono" -> "Roboto Mono"
+    // - PascalCase to spaces:  "RobotoMono"  -> "Roboto Mono"
+    const family = prop.replace(/_/g, " ").replace(/([a-z])([A-Z])/g, "$1 $2");
+    return createFontLoader(family);
   },
-);
+});
 
 export default googleFonts;
