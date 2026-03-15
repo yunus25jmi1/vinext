@@ -8,11 +8,14 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import {
   clientManualChunks,
+  clientOutputConfig,
   clientTreeshakeConfig,
   computeLazyChunks,
   _augmentSsrManifestFromBundle,
   _stripServerExports,
   _asyncHooksStubPlugin,
+  getClientOutputConfig,
+  getClientTreeshakeConfig,
 } from "../packages/vinext/src/index.js";
 
 // The vinext config hook mutates process.env.NODE_ENV as a side effect (matching
@@ -44,6 +47,50 @@ describe("clientTreeshakeConfig", () => {
     // barrel-heavy libraries) while preserving side effects for local modules
     // (CSS imports, polyfills).
     expect(clientTreeshakeConfig.moduleSideEffects).toBe("no-external");
+  });
+});
+
+// ─── getClientOutputConfig / getClientTreeshakeConfig ────────────────────────
+
+describe("getClientOutputConfig", () => {
+  it("returns full config with experimentalMinChunkSize for Vite 7", () => {
+    const result = getClientOutputConfig(7);
+    expect(result).toEqual(clientOutputConfig);
+    expect((result as any).experimentalMinChunkSize).toBe(10_000);
+    expect(result.manualChunks).toBe(clientManualChunks);
+  });
+
+  it("returns config without experimentalMinChunkSize for Vite 8", () => {
+    const result = getClientOutputConfig(8);
+    expect(result).toEqual({ manualChunks: clientManualChunks });
+    expect(result).not.toHaveProperty("experimentalMinChunkSize");
+  });
+
+  it("returns config without experimentalMinChunkSize for Vite 9", () => {
+    const result = getClientOutputConfig(9);
+    expect(result).toEqual({ manualChunks: clientManualChunks });
+    expect(result).not.toHaveProperty("experimentalMinChunkSize");
+  });
+});
+
+describe("getClientTreeshakeConfig", () => {
+  it("returns full config with preset for Vite 7", () => {
+    const result = getClientTreeshakeConfig(7);
+    expect(result).toEqual(clientTreeshakeConfig);
+    expect((result as any).preset).toBe("recommended");
+    expect(result.moduleSideEffects).toBe("no-external");
+  });
+
+  it("returns config without preset for Vite 8", () => {
+    const result = getClientTreeshakeConfig(8);
+    expect(result).toEqual({ moduleSideEffects: "no-external" });
+    expect(result).not.toHaveProperty("preset");
+  });
+
+  it("returns config without preset for Vite 9", () => {
+    const result = getClientTreeshakeConfig(9);
+    expect(result).toEqual({ moduleSideEffects: "no-external" });
+    expect(result).not.toHaveProperty("preset");
   });
 });
 

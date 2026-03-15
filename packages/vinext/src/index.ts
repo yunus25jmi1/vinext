@@ -241,7 +241,7 @@ function extractStaticValue(node: any): unknown {
  * by a project that has Vite 8 — so we resolve from cwd, not from
  * the plugin's own location.
  */
-function getViteMajorVersion(): number {
+export function getViteMajorVersion(): number {
   try {
     const require = createRequire(path.join(process.cwd(), "package.json"));
     const vitePkg = require("vite/package.json");
@@ -529,7 +529,9 @@ const clientTreeshakeConfig = {
  * Get Rollup-compatible output config for client builds.
  * Returns config without Vite 8/Rolldown-incompatible options.
  */
-function getClientOutputConfig(viteVersion: number) {
+function getClientOutputConfig(
+  viteVersion: number,
+): typeof clientOutputConfig | { manualChunks: typeof clientManualChunks } {
   if (viteVersion >= 8) {
     // Vite 8+ uses Rolldown which doesn't support experimentalMinChunkSize
     return {
@@ -544,7 +546,9 @@ function getClientOutputConfig(viteVersion: number) {
  * Get Rollup-compatible treeshake config for client builds.
  * Returns config without Vite 8/Rolldown-incompatible options.
  */
-function getClientTreeshakeConfig(viteVersion: number) {
+function getClientTreeshakeConfig(
+  viteVersion: number,
+): typeof clientTreeshakeConfig | { moduleSideEffects: "no-external" } {
   if (viteVersion >= 8) {
     // Vite 8+ uses Rolldown which doesn't support `preset` option
     // moduleSideEffects is still supported in Rolldown
