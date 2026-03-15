@@ -108,11 +108,10 @@ export default function Help({ path }) {
   afterAll(async () => {
     try {
       (prServer?.httpServer as any)?.closeAllConnections?.();
-      await Promise.race([
-        prServer?.close(),
-        new Promise((resolve) => setTimeout(resolve, 5000)),
-      ]);
-    } catch { /* ignore */ }
+      await Promise.race([prServer?.close(), new Promise((resolve) => setTimeout(resolve, 5000))]);
+    } catch {
+      /* ignore */
+    }
     const fsp = await import("node:fs/promises");
     await fsp.rm(tmpDir, { recursive: true, force: true }).catch(() => {});
   }, 15000);
@@ -232,11 +231,10 @@ describe("external URL rewrites", () => {
   afterAll(async () => {
     try {
       (extServer?.httpServer as any)?.closeAllConnections?.();
-      await Promise.race([
-        extServer?.close(),
-        new Promise((resolve) => setTimeout(resolve, 5000)),
-      ]);
-    } catch { /* ignore */ }
+      await Promise.race([extServer?.close(), new Promise((resolve) => setTimeout(resolve, 5000))]);
+    } catch {
+      /* ignore */
+    }
     upstreamServer?.close();
     const fsp = await import("node:fs/promises");
     await fsp.rm(extTmpDir, { recursive: true, force: true }).catch(() => {});
@@ -294,10 +292,7 @@ describe("CSS Modules support (Pages Router)", () => {
     await fsp.symlink(rootNodeModules, path.join(cssTmpDir, "node_modules"), "junction");
 
     // next.config.mjs
-    await fsp.writeFile(
-      path.join(cssTmpDir, "next.config.mjs"),
-      `export default {};`,
-    );
+    await fsp.writeFile(path.join(cssTmpDir, "next.config.mjs"), `export default {};`);
 
     // Create directories
     await fsp.mkdir(path.join(cssTmpDir, "pages"), { recursive: true });
@@ -351,11 +346,10 @@ export default function CSSModulesTest() {
   afterAll(async () => {
     try {
       (cssServer?.httpServer as any)?.closeAllConnections?.();
-      await Promise.race([
-        cssServer?.close(),
-        new Promise((resolve) => setTimeout(resolve, 5000)),
-      ]);
-    } catch { /* ignore */ }
+      await Promise.race([cssServer?.close(), new Promise((resolve) => setTimeout(resolve, 5000))]);
+    } catch {
+      /* ignore */
+    }
     const fsp = await import("node:fs/promises");
     await fsp.rm(cssTmpDir, { recursive: true, force: true }).catch(() => {});
   }, 15000);
@@ -516,13 +510,15 @@ describe("ISR (Pages Router)", () => {
 
 describe("ISR cache internals", () => {
   it("MemoryCacheHandler returns stale entries instead of null", async () => {
-    const { MemoryCacheHandler } = await import(
-      "../packages/vinext/src/shims/cache.js"
-    );
+    const { MemoryCacheHandler } = await import("../packages/vinext/src/shims/cache.js");
     const handler = new MemoryCacheHandler();
 
     // Set an entry with a very short TTL
-    await handler.set("test-stale", { kind: "FETCH", data: { headers: {}, body: "test", url: "" }, tags: [], revalidate: 0 }, { revalidate: 0.001 });
+    await handler.set(
+      "test-stale",
+      { kind: "FETCH", data: { headers: {}, body: "test", url: "" }, tags: [], revalidate: 0 },
+      { revalidate: 0.001 },
+    );
 
     // Wait for it to expire
     await new Promise((r) => setTimeout(r, 10));
@@ -535,12 +531,14 @@ describe("ISR cache internals", () => {
   });
 
   it("MemoryCacheHandler returns fresh entries without cacheState", async () => {
-    const { MemoryCacheHandler } = await import(
-      "../packages/vinext/src/shims/cache.js"
-    );
+    const { MemoryCacheHandler } = await import("../packages/vinext/src/shims/cache.js");
     const handler = new MemoryCacheHandler();
 
-    await handler.set("test-fresh", { kind: "FETCH", data: { headers: {}, body: "test", url: "" }, tags: [], revalidate: 60 }, { revalidate: 60 });
+    await handler.set(
+      "test-fresh",
+      { kind: "FETCH", data: { headers: {}, body: "test", url: "" }, tags: [], revalidate: 60 },
+      { revalidate: 60 },
+    );
 
     const result = await handler.get("test-fresh");
     expect(result).not.toBeNull();
@@ -548,12 +546,19 @@ describe("ISR cache internals", () => {
   });
 
   it("MemoryCacheHandler still returns null for tag-invalidated entries", async () => {
-    const { MemoryCacheHandler } = await import(
-      "../packages/vinext/src/shims/cache.js"
-    );
+    const { MemoryCacheHandler } = await import("../packages/vinext/src/shims/cache.js");
     const handler = new MemoryCacheHandler();
 
-    await handler.set("test-tag", { kind: "FETCH", data: { headers: {}, body: "test", url: "" }, tags: ["mytag"], revalidate: 0 }, { revalidate: 60, tags: ["mytag"] });
+    await handler.set(
+      "test-tag",
+      {
+        kind: "FETCH",
+        data: { headers: {}, body: "test", url: "" },
+        tags: ["mytag"],
+        revalidate: 0,
+      },
+      { revalidate: 60, tags: ["mytag"] },
+    );
 
     // Invalidate the tag
     await handler.revalidateTag("mytag");
@@ -574,9 +579,7 @@ describe("ISR cache internals", () => {
 
 describe("i18n config parsing", () => {
   it("parses i18n config from next.config.js", async () => {
-    const { resolveNextConfig } = await import(
-      "../packages/vinext/src/config/next-config.js"
-    );
+    const { resolveNextConfig } = await import("../packages/vinext/src/config/next-config.js");
     const config = await resolveNextConfig({
       i18n: {
         locales: ["en", "fr", "de"],
@@ -592,18 +595,14 @@ describe("i18n config parsing", () => {
   });
 
   it("returns null i18n when not configured", async () => {
-    const { resolveNextConfig } = await import(
-      "../packages/vinext/src/config/next-config.js"
-    );
+    const { resolveNextConfig } = await import("../packages/vinext/src/config/next-config.js");
     const config = await resolveNextConfig({});
 
     expect(config.i18n).toBeNull();
   });
 
   it("defaults localeDetection to true", async () => {
-    const { resolveNextConfig } = await import(
-      "../packages/vinext/src/config/next-config.js"
-    );
+    const { resolveNextConfig } = await import("../packages/vinext/src/config/next-config.js");
     const config = await resolveNextConfig({
       i18n: {
         locales: ["en", "fr"],
@@ -615,9 +614,7 @@ describe("i18n config parsing", () => {
   });
 
   it("respects localeDetection: false", async () => {
-    const { resolveNextConfig } = await import(
-      "../packages/vinext/src/config/next-config.js"
-    );
+    const { resolveNextConfig } = await import("../packages/vinext/src/config/next-config.js");
     const config = await resolveNextConfig({
       i18n: {
         locales: ["en", "fr"],
@@ -820,7 +817,9 @@ export default function About({ locale, locales, defaultLocale }) {
         i18nServer?.close(),
         new Promise((resolve) => setTimeout(resolve, 5000)),
       ]);
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
     const fsp = await import("node:fs/promises");
     await fsp.rm(i18nTmpDir, { recursive: true, force: true }).catch(() => {});
   }, 15000);
@@ -1054,7 +1053,9 @@ export default function Home() {
         linkLocaleServer?.close(),
         new Promise((resolve) => setTimeout(resolve, 5000)),
       ]);
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
     const fsp = await import("node:fs/promises");
     await fsp.rm(linkLocaleTmpDir, { recursive: true, force: true }).catch(() => {});
   }, 15000);
@@ -1086,7 +1087,9 @@ export default function Home() {
   it("Link without locale prop renders href without locale prefix", async () => {
     const res = await fetch(`${linkLocaleBaseUrl}/`);
     const html = await res.text();
-    const linkMatch = html.match(/href="([^"]*)"[^>]*id="link-default"|id="link-default"[^>]*href="([^"]*)"/);
+    const linkMatch = html.match(
+      /href="([^"]*)"[^>]*id="link-default"|id="link-default"[^>]*href="([^"]*)"/,
+    );
     expect(linkMatch).not.toBeNull();
     const href = linkMatch![1] || linkMatch![2];
     expect(href).toBe("/about");
@@ -1095,7 +1098,9 @@ export default function Home() {
   it("Link with locale={false} renders href without locale prefix", async () => {
     const res = await fetch(`${linkLocaleBaseUrl}/`);
     const html = await res.text();
-    const linkMatch = html.match(/href="([^"]*)"[^>]*id="link-no-locale"|id="link-no-locale"[^>]*href="([^"]*)"/);
+    const linkMatch = html.match(
+      /href="([^"]*)"[^>]*id="link-no-locale"|id="link-no-locale"[^>]*href="([^"]*)"/,
+    );
     expect(linkMatch).not.toBeNull();
     const href = linkMatch![1] || linkMatch![2];
     expect(href).toBe("/about");
@@ -1161,7 +1166,9 @@ describe("i18n localeDetection: false", () => {
         noDetectServer?.close(),
         new Promise((resolve) => setTimeout(resolve, 5000)),
       ]);
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
     const fsp = await import("node:fs/promises");
     await fsp.rm(noDetectTmpDir, { recursive: true, force: true }).catch(() => {});
   }, 15000);
@@ -1204,9 +1211,7 @@ describe("basePath support (Pages Router)", () => {
   });
 
   it("resolveNextConfig correctly resolves basePath", async () => {
-    const { resolveNextConfig } = await import(
-      "../packages/vinext/src/config/next-config.js"
-    );
+    const { resolveNextConfig } = await import("../packages/vinext/src/config/next-config.js");
 
     // Default: empty basePath
     const defaultConfig = await resolveNextConfig({});
@@ -1231,9 +1236,7 @@ describe("basePath support (Pages Router)", () => {
   });
 
   it("resolveNextConfig correctly resolves trailingSlash", async () => {
-    const { resolveNextConfig } = await import(
-      "../packages/vinext/src/config/next-config.js"
-    );
+    const { resolveNextConfig } = await import("../packages/vinext/src/config/next-config.js");
 
     // Default: trailingSlash is false
     const defaultConfig = await resolveNextConfig({});
@@ -1332,11 +1335,10 @@ export default function Home() {
   afterAll(async () => {
     try {
       (bpServer?.httpServer as any)?.closeAllConnections?.();
-      await Promise.race([
-        bpServer?.close(),
-        new Promise((resolve) => setTimeout(resolve, 5000)),
-      ]);
-    } catch { /* ignore close errors */ }
+      await Promise.race([bpServer?.close(), new Promise((resolve) => setTimeout(resolve, 5000))]);
+    } catch {
+      /* ignore close errors */
+    }
     const fsp = await import("node:fs/promises");
     await fsp.rm(tmpDir, { recursive: true, force: true }).catch(() => {});
   }, 15000);
@@ -1463,7 +1465,9 @@ describe("basePath with nested path (/docs/v2)", () => {
         nestedServer?.close(),
         new Promise((resolve) => setTimeout(resolve, 5000)),
       ]);
-    } catch { /* ignore close errors */ }
+    } catch {
+      /* ignore close errors */
+    }
     const fsp = await import("node:fs/promises");
     await fsp.rm(tmpDir, { recursive: true, force: true }).catch(() => {});
   }, 15000);
@@ -1555,11 +1559,10 @@ describe("basePath + trailingSlash interaction", () => {
   afterAll(async () => {
     try {
       (tsServer?.httpServer as any)?.closeAllConnections?.();
-      await Promise.race([
-        tsServer?.close(),
-        new Promise((resolve) => setTimeout(resolve, 5000)),
-      ]);
-    } catch { /* ignore close errors */ }
+      await Promise.race([tsServer?.close(), new Promise((resolve) => setTimeout(resolve, 5000))]);
+    } catch {
+      /* ignore close errors */
+    }
     const fsp = await import("node:fs/promises");
     await fsp.rm(tmpDir, { recursive: true, force: true }).catch(() => {});
   }, 15000);
@@ -1583,9 +1586,7 @@ describe("metadata title templates", () => {
   let mergeMetadata: typeof import("../packages/vinext/src/shims/metadata.js").mergeMetadata;
 
   beforeAll(async () => {
-    const mod = await import(
-      "../packages/vinext/src/shims/metadata.js"
-    );
+    const mod = await import("../packages/vinext/src/shims/metadata.js");
     mergeMetadata = mod.mergeMetadata;
   });
 
@@ -1655,9 +1656,7 @@ describe("metadata title templates", () => {
   });
 
   it("simple string title without template passes through", () => {
-    const result = mergeMetadata([
-      { title: "My Page" },
-    ]);
+    const result = mergeMetadata([{ title: "My Page" }]);
     expect(result.title).toBe("My Page");
   });
 
@@ -1702,10 +1701,7 @@ describe("MetadataHead rendering", () => {
     const html = renderToStaticMarkup(
       React.createElement(MetadataHead, {
         metadata: {
-          authors: [
-            { name: "Seb" },
-            { name: "Josh", url: "https://josh.dev" },
-          ],
+          authors: [{ name: "Seb" }, { name: "Josh", url: "https://josh.dev" }],
         },
       }),
     );
@@ -1885,12 +1881,14 @@ describe("MetadataHead rendering", () => {
 
 describe("ViewportHead rendering", () => {
   let ViewportHead: typeof import("../packages/vinext/src/shims/metadata.js").ViewportHead;
+  let mergeViewport: typeof import("../packages/vinext/src/shims/metadata.js").mergeViewport;
   let React: typeof import("react");
   let renderToStaticMarkup: typeof import("react-dom/server").renderToStaticMarkup;
 
   beforeAll(async () => {
     const mod = await import("../packages/vinext/src/shims/metadata.js");
     ViewportHead = mod.ViewportHead;
+    mergeViewport = mod.mergeViewport;
     React = await import("react");
     renderToStaticMarkup = (await import("react-dom/server")).renderToStaticMarkup;
   });
@@ -1959,6 +1957,42 @@ describe("ViewportHead rendering", () => {
     expect(html).toContain('name="color-scheme"');
     expect(html).toContain('content="dark"');
   });
+
+  // mergeViewport default injection tests
+  it("mergeViewport includes default width and initialScale when not provided", () => {
+    const result = mergeViewport([{ themeColor: "#000" }]);
+    expect(result.width).toBe("device-width");
+    expect(result.initialScale).toBe(1);
+    expect(result.themeColor).toBe("#000");
+  });
+
+  it("mergeViewport allows overriding defaults", () => {
+    const result = mergeViewport([{ width: 1024, initialScale: 0.5 }]);
+    expect(result.width).toBe(1024);
+    expect(result.initialScale).toBe(0.5);
+  });
+
+  it("mergeViewport returns defaults for empty list", () => {
+    const result = mergeViewport([]);
+    expect(result.width).toBe("device-width");
+    expect(result.initialScale).toBe(1);
+  });
+
+  it("mergeViewport later entries override earlier ones including defaults", () => {
+    const result = mergeViewport([{ width: 800 }, { width: 1024, themeColor: "#fff" }]);
+    expect(result.width).toBe(1024);
+    expect(result.initialScale).toBe(1);
+    expect(result.themeColor).toBe("#fff");
+  });
+
+  it("renders viewport meta even when only themeColor is provided (defaults injected)", () => {
+    const merged = mergeViewport([{ themeColor: "#000" }]);
+    const html = renderToStaticMarkup(React.createElement(ViewportHead, { viewport: merged }));
+    expect(html).toContain('name="viewport"');
+    expect(html).toContain("width=device-width");
+    expect(html).toContain("initial-scale=1");
+    expect(html).toContain('name="theme-color"');
+  });
 });
 
 describe("fetch cache (extended fetch with next options)", () => {
@@ -1989,9 +2023,7 @@ describe("fetch cache (extended fetch with next options)", () => {
   });
 
   it("exports withFetchCache, runWithFetchCache, getOriginalFetch, getCollectedFetchTags", async () => {
-    const mod = await import(
-      "../packages/vinext/src/shims/fetch-cache.js"
-    );
+    const mod = await import("../packages/vinext/src/shims/fetch-cache.js");
     expect(typeof mod.withFetchCache).toBe("function");
     expect(typeof mod.runWithFetchCache).toBe("function");
     expect(typeof mod.getOriginalFetch).toBe("function");
@@ -1999,9 +2031,7 @@ describe("fetch cache (extended fetch with next options)", () => {
   });
 
   it("passes through fetch without next options unchanged", async () => {
-    const { withFetchCache } = await import(
-      "../packages/vinext/src/shims/fetch-cache.js"
-    );
+    const { withFetchCache } = await import("../packages/vinext/src/shims/fetch-cache.js");
 
     fetchCallCount = 0;
     const cleanup = withFetchCache();
@@ -2019,12 +2049,9 @@ describe("fetch cache (extended fetch with next options)", () => {
   });
 
   it("caches fetch with { next: { revalidate } }", async () => {
-    const { withFetchCache } = await import(
-      "../packages/vinext/src/shims/fetch-cache.js"
-    );
-    const { setCacheHandler, MemoryCacheHandler } = await import(
-      "../packages/vinext/src/shims/cache.js"
-    );
+    const { withFetchCache } = await import("../packages/vinext/src/shims/fetch-cache.js");
+    const { setCacheHandler, MemoryCacheHandler } =
+      await import("../packages/vinext/src/shims/cache.js");
 
     // Fresh cache handler for isolation
     setCacheHandler(new MemoryCacheHandler());
@@ -2053,12 +2080,9 @@ describe("fetch cache (extended fetch with next options)", () => {
   });
 
   it("serves stale fetch cache entry and triggers background revalidation", async () => {
-    const { withFetchCache } = await import(
-      "../packages/vinext/src/shims/fetch-cache.js"
-    );
-    const { setCacheHandler, MemoryCacheHandler } = await import(
-      "../packages/vinext/src/shims/cache.js"
-    );
+    const { withFetchCache } = await import("../packages/vinext/src/shims/fetch-cache.js");
+    const { setCacheHandler, MemoryCacheHandler } =
+      await import("../packages/vinext/src/shims/cache.js");
 
     // Fresh cache handler for isolation
     setCacheHandler(new MemoryCacheHandler());
@@ -2094,9 +2118,7 @@ describe("fetch cache (extended fetch with next options)", () => {
         const tick = () => {
           if (fetchCallCount >= 2) return resolve();
           if (originalNow() - start > 1000) {
-            return reject(
-              new Error("timed out waiting for background revalidation"),
-            );
+            return reject(new Error("timed out waiting for background revalidation"));
           }
           setTimeout(tick, 10);
         };
@@ -2118,12 +2140,9 @@ describe("fetch cache (extended fetch with next options)", () => {
   });
 
   it("cache: 'force-cache' caches indefinitely", async () => {
-    const { withFetchCache } = await import(
-      "../packages/vinext/src/shims/fetch-cache.js"
-    );
-    const { setCacheHandler, MemoryCacheHandler } = await import(
-      "../packages/vinext/src/shims/cache.js"
-    );
+    const { withFetchCache } = await import("../packages/vinext/src/shims/fetch-cache.js");
+    const { setCacheHandler, MemoryCacheHandler } =
+      await import("../packages/vinext/src/shims/cache.js");
 
     setCacheHandler(new MemoryCacheHandler());
     fetchCallCount = 0;
@@ -2150,12 +2169,9 @@ describe("fetch cache (extended fetch with next options)", () => {
   });
 
   it("cache: 'no-store' bypasses cache", async () => {
-    const { withFetchCache } = await import(
-      "../packages/vinext/src/shims/fetch-cache.js"
-    );
-    const { setCacheHandler, MemoryCacheHandler } = await import(
-      "../packages/vinext/src/shims/cache.js"
-    );
+    const { withFetchCache } = await import("../packages/vinext/src/shims/fetch-cache.js");
+    const { setCacheHandler, MemoryCacheHandler } =
+      await import("../packages/vinext/src/shims/cache.js");
 
     setCacheHandler(new MemoryCacheHandler());
     fetchCallCount = 0;
@@ -2180,12 +2196,9 @@ describe("fetch cache (extended fetch with next options)", () => {
   });
 
   it("next.revalidate: false bypasses cache", async () => {
-    const { withFetchCache } = await import(
-      "../packages/vinext/src/shims/fetch-cache.js"
-    );
-    const { setCacheHandler, MemoryCacheHandler } = await import(
-      "../packages/vinext/src/shims/cache.js"
-    );
+    const { withFetchCache } = await import("../packages/vinext/src/shims/fetch-cache.js");
+    const { setCacheHandler, MemoryCacheHandler } =
+      await import("../packages/vinext/src/shims/cache.js");
 
     setCacheHandler(new MemoryCacheHandler());
     fetchCallCount = 0;
@@ -2202,12 +2215,9 @@ describe("fetch cache (extended fetch with next options)", () => {
   });
 
   it("next.revalidate: 0 bypasses cache", async () => {
-    const { withFetchCache } = await import(
-      "../packages/vinext/src/shims/fetch-cache.js"
-    );
-    const { setCacheHandler, MemoryCacheHandler } = await import(
-      "../packages/vinext/src/shims/cache.js"
-    );
+    const { withFetchCache } = await import("../packages/vinext/src/shims/fetch-cache.js");
+    const { setCacheHandler, MemoryCacheHandler } =
+      await import("../packages/vinext/src/shims/cache.js");
 
     setCacheHandler(new MemoryCacheHandler());
     fetchCallCount = 0;
@@ -2224,12 +2234,9 @@ describe("fetch cache (extended fetch with next options)", () => {
   });
 
   it("revalidateTag invalidates fetch cache entries", async () => {
-    const { withFetchCache } = await import(
-      "../packages/vinext/src/shims/fetch-cache.js"
-    );
-    const { setCacheHandler, MemoryCacheHandler, revalidateTag } = await import(
-      "../packages/vinext/src/shims/cache.js"
-    );
+    const { withFetchCache } = await import("../packages/vinext/src/shims/fetch-cache.js");
+    const { setCacheHandler, MemoryCacheHandler, revalidateTag } =
+      await import("../packages/vinext/src/shims/cache.js");
 
     setCacheHandler(new MemoryCacheHandler());
     fetchCallCount = 0;
@@ -2269,12 +2276,10 @@ describe("fetch cache (extended fetch with next options)", () => {
   });
 
   it("collects fetch tags during render pass", async () => {
-    const { withFetchCache, getCollectedFetchTags } = await import(
-      "../packages/vinext/src/shims/fetch-cache.js"
-    );
-    const { setCacheHandler, MemoryCacheHandler } = await import(
-      "../packages/vinext/src/shims/cache.js"
-    );
+    const { withFetchCache, getCollectedFetchTags } =
+      await import("../packages/vinext/src/shims/fetch-cache.js");
+    const { setCacheHandler, MemoryCacheHandler } =
+      await import("../packages/vinext/src/shims/cache.js");
 
     setCacheHandler(new MemoryCacheHandler());
 
@@ -2295,12 +2300,9 @@ describe("fetch cache (extended fetch with next options)", () => {
   });
 
   it("different URLs produce separate cache entries", async () => {
-    const { withFetchCache } = await import(
-      "../packages/vinext/src/shims/fetch-cache.js"
-    );
-    const { setCacheHandler, MemoryCacheHandler } = await import(
-      "../packages/vinext/src/shims/cache.js"
-    );
+    const { withFetchCache } = await import("../packages/vinext/src/shims/fetch-cache.js");
+    const { setCacheHandler, MemoryCacheHandler } =
+      await import("../packages/vinext/src/shims/cache.js");
 
     setCacheHandler(new MemoryCacheHandler());
     fetchCallCount = 0;
@@ -2322,12 +2324,9 @@ describe("fetch cache (extended fetch with next options)", () => {
   });
 
   it("fetch with only tags (no revalidate) caches indefinitely", async () => {
-    const { withFetchCache } = await import(
-      "../packages/vinext/src/shims/fetch-cache.js"
-    );
-    const { setCacheHandler, MemoryCacheHandler } = await import(
-      "../packages/vinext/src/shims/cache.js"
-    );
+    const { withFetchCache } = await import("../packages/vinext/src/shims/fetch-cache.js");
+    const { setCacheHandler, MemoryCacheHandler } =
+      await import("../packages/vinext/src/shims/cache.js");
 
     setCacheHandler(new MemoryCacheHandler());
     fetchCallCount = 0;
@@ -2344,12 +2343,10 @@ describe("fetch cache (extended fetch with next options)", () => {
   });
 
   it("cleanup clears per-request tag state", async () => {
-    const { withFetchCache, getCollectedFetchTags } = await import(
-      "../packages/vinext/src/shims/fetch-cache.js"
-    );
-    const { setCacheHandler, MemoryCacheHandler } = await import(
-      "../packages/vinext/src/shims/cache.js"
-    );
+    const { withFetchCache, getCollectedFetchTags } =
+      await import("../packages/vinext/src/shims/fetch-cache.js");
+    const { setCacheHandler, MemoryCacheHandler } =
+      await import("../packages/vinext/src/shims/cache.js");
 
     setCacheHandler(new MemoryCacheHandler());
     const cleanup = withFetchCache();
@@ -2360,12 +2357,10 @@ describe("fetch cache (extended fetch with next options)", () => {
   });
 
   it("runWithFetchCache isolates tags and returns result", async () => {
-    const { runWithFetchCache, getCollectedFetchTags } = await import(
-      "../packages/vinext/src/shims/fetch-cache.js"
-    );
-    const { setCacheHandler, MemoryCacheHandler } = await import(
-      "../packages/vinext/src/shims/cache.js"
-    );
+    const { runWithFetchCache, getCollectedFetchTags } =
+      await import("../packages/vinext/src/shims/fetch-cache.js");
+    const { setCacheHandler, MemoryCacheHandler } =
+      await import("../packages/vinext/src/shims/cache.js");
 
     setCacheHandler(new MemoryCacheHandler());
     fetchCallCount = 0;
@@ -2383,12 +2378,9 @@ describe("fetch cache (extended fetch with next options)", () => {
   });
 
   it("strips next property before passing to real fetch", async () => {
-    const { withFetchCache } = await import(
-      "../packages/vinext/src/shims/fetch-cache.js"
-    );
-    const { setCacheHandler, MemoryCacheHandler } = await import(
-      "../packages/vinext/src/shims/cache.js"
-    );
+    const { withFetchCache } = await import("../packages/vinext/src/shims/fetch-cache.js");
+    const { setCacheHandler, MemoryCacheHandler } =
+      await import("../packages/vinext/src/shims/cache.js");
 
     setCacheHandler(new MemoryCacheHandler());
 
@@ -2414,24 +2406,20 @@ describe("fetch cache (extended fetch with next options)", () => {
 
 describe("instrumentation.ts support", () => {
   it("exports findInstrumentationFile", async () => {
-    const mod = await import(
-      "../packages/vinext/src/server/instrumentation.js"
-    );
+    const mod = await import("../packages/vinext/src/server/instrumentation.js");
     expect(typeof mod.findInstrumentationFile).toBe("function");
   });
 
   it("findInstrumentationFile returns null when no file exists", async () => {
-    const { findInstrumentationFile } = await import(
-      "../packages/vinext/src/server/instrumentation.js"
-    );
+    const { findInstrumentationFile } =
+      await import("../packages/vinext/src/server/instrumentation.js");
     const result = findInstrumentationFile("/nonexistent/path");
     expect(result).toBeNull();
   });
 
   it("findInstrumentationFile detects instrumentation.ts", async () => {
-    const { findInstrumentationFile } = await import(
-      "../packages/vinext/src/server/instrumentation.js"
-    );
+    const { findInstrumentationFile } =
+      await import("../packages/vinext/src/server/instrumentation.js");
     const os = await import("node:os");
     const fs = await import("node:fs");
     const path = await import("node:path");
@@ -2451,9 +2439,8 @@ describe("instrumentation.ts support", () => {
   });
 
   it("findInstrumentationFile detects src/instrumentation.ts", async () => {
-    const { findInstrumentationFile } = await import(
-      "../packages/vinext/src/server/instrumentation.js"
-    );
+    const { findInstrumentationFile } =
+      await import("../packages/vinext/src/server/instrumentation.js");
     const os = await import("node:os");
     const fs = await import("node:fs");
     const path = await import("node:path");
@@ -2462,7 +2449,7 @@ describe("instrumentation.ts support", () => {
     fs.mkdirSync(path.join(tmpDir, "src"));
     fs.writeFileSync(
       path.join(tmpDir, "src", "instrumentation.ts"),
-      'export function register() {}',
+      "export function register() {}",
     );
 
     const result = findInstrumentationFile(tmpDir);
@@ -2472,36 +2459,36 @@ describe("instrumentation.ts support", () => {
   });
 
   it("runInstrumentation calls register() and stores onRequestError", async () => {
-    const { runInstrumentation, getOnRequestErrorHandler } = await import(
-      "../packages/vinext/src/server/instrumentation.js"
-    );
+    const { runInstrumentation, getOnRequestErrorHandler } =
+      await import("../packages/vinext/src/server/instrumentation.js");
 
     let registerCalled = false;
     const mockOnRequestError = (_error: any, _request: any, _context: any) => {};
 
-    // Create a mock SSR module loader
-    const mockServer = {
-      ssrLoadModule: async (_id: string) => ({
-        register: () => { registerCalled = true; },
+    // Create a mock ModuleRunner
+    const mockRunner = {
+      import: async (_id: string) => ({
+        register: () => {
+          registerCalled = true;
+        },
         onRequestError: mockOnRequestError,
       }),
     };
 
-    await runInstrumentation(mockServer, "/fake/instrumentation.ts");
+    await runInstrumentation(mockRunner, "/fake/instrumentation.ts");
 
     expect(registerCalled).toBe(true);
     expect(getOnRequestErrorHandler()).toBe(mockOnRequestError);
   });
 
   it("reportRequestError calls onRequestError handler", async () => {
-    const { runInstrumentation, reportRequestError } = await import(
-      "../packages/vinext/src/server/instrumentation.js"
-    );
+    const { runInstrumentation, reportRequestError } =
+      await import("../packages/vinext/src/server/instrumentation.js");
 
     const reportedErrors: { error: Error; request: any; context: any }[] = [];
 
-    const mockServer = {
-      ssrLoadModule: async (_id: string) => ({
+    const mockRunner = {
+      import: async (_id: string) => ({
         register: () => {},
         onRequestError: (error: Error, request: any, context: any) => {
           reportedErrors.push({ error, request, context });
@@ -2509,7 +2496,7 @@ describe("instrumentation.ts support", () => {
       }),
     };
 
-    await runInstrumentation(mockServer, "/fake/instrumentation.ts");
+    await runInstrumentation(mockRunner, "/fake/instrumentation.ts");
 
     const testError = new Error("test error");
     await reportRequestError(
@@ -2525,17 +2512,16 @@ describe("instrumentation.ts support", () => {
   });
 
   it("reportRequestError is a no-op when no handler is registered", async () => {
-    const { reportRequestError, runInstrumentation } = await import(
-      "../packages/vinext/src/server/instrumentation.js"
-    );
+    const { reportRequestError, runInstrumentation } =
+      await import("../packages/vinext/src/server/instrumentation.js");
 
     // Register a module with no onRequestError
-    const mockServer = {
-      ssrLoadModule: async (_id: string) => ({
+    const mockRunner = {
+      import: async (_id: string) => ({
         register: () => {},
       }),
     };
-    await runInstrumentation(mockServer, "/fake/no-error-handler.ts");
+    await runInstrumentation(mockRunner, "/fake/no-error-handler.ts");
 
     // Should not throw
     await reportRequestError(
@@ -2546,49 +2532,58 @@ describe("instrumentation.ts support", () => {
   });
 
   it("runInstrumentation handles missing register gracefully", async () => {
-    const { runInstrumentation } = await import(
-      "../packages/vinext/src/server/instrumentation.js"
-    );
+    const { runInstrumentation } = await import("../packages/vinext/src/server/instrumentation.js");
 
     // Module with no register() or onRequestError()
-    const mockServer = {
-      ssrLoadModule: async (_id: string) => ({}),
+    const mockRunner = {
+      import: async (_id: string) => ({}),
     };
 
     // Should not throw
-    await runInstrumentation(mockServer, "/fake/empty-instrumentation.ts");
+    await runInstrumentation(mockRunner, "/fake/empty-instrumentation.ts");
+  });
+
+  it("runInstrumentation handles import errors gracefully", async () => {
+    const { runInstrumentation } = await import("../packages/vinext/src/server/instrumentation.js");
+    const mockRunner = {
+      import: async (_id: string) => {
+        throw new TypeError("Cannot read properties of undefined (reading 'outsideEmitter')");
+      },
+    };
+    const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      await runInstrumentation(mockRunner, "/fake/instrumentation.ts");
+      expect(consoleErrorSpy).toHaveBeenCalledWith(
+        "[vinext] Failed to load instrumentation:",
+        "Cannot read properties of undefined (reading 'outsideEmitter')",
+      );
+    } finally {
+      consoleErrorSpy.mockRestore();
+    }
   });
 });
 
 describe("production server compression", () => {
   it("negotiateEncoding returns br when Accept-Encoding includes br", async () => {
-    const { negotiateEncoding } = await import(
-      "../packages/vinext/src/server/prod-server.js"
-    );
+    const { negotiateEncoding } = await import("../packages/vinext/src/server/prod-server.js");
     const req = { headers: { "accept-encoding": "gzip, deflate, br" } };
     expect(negotiateEncoding(req as any)).toBe("br");
   });
 
   it("negotiateEncoding returns gzip when br is not available", async () => {
-    const { negotiateEncoding } = await import(
-      "../packages/vinext/src/server/prod-server.js"
-    );
+    const { negotiateEncoding } = await import("../packages/vinext/src/server/prod-server.js");
     const req = { headers: { "accept-encoding": "gzip, deflate" } };
     expect(negotiateEncoding(req as any)).toBe("gzip");
   });
 
   it("negotiateEncoding returns null when no encoding header", async () => {
-    const { negotiateEncoding } = await import(
-      "../packages/vinext/src/server/prod-server.js"
-    );
+    const { negotiateEncoding } = await import("../packages/vinext/src/server/prod-server.js");
     const req = { headers: {} };
     expect(negotiateEncoding(req as any)).toBeNull();
   });
 
   it("COMPRESSIBLE_TYPES includes expected content types", async () => {
-    const { COMPRESSIBLE_TYPES } = await import(
-      "../packages/vinext/src/server/prod-server.js"
-    );
+    const { COMPRESSIBLE_TYPES } = await import("../packages/vinext/src/server/prod-server.js");
     expect(COMPRESSIBLE_TYPES.has("text/html")).toBe(true);
     expect(COMPRESSIBLE_TYPES.has("application/javascript")).toBe(true);
     expect(COMPRESSIBLE_TYPES.has("application/json")).toBe(true);
@@ -2600,17 +2595,13 @@ describe("production server compression", () => {
   });
 
   it("COMPRESS_THRESHOLD is a reasonable minimum", async () => {
-    const { COMPRESS_THRESHOLD } = await import(
-      "../packages/vinext/src/server/prod-server.js"
-    );
+    const { COMPRESS_THRESHOLD } = await import("../packages/vinext/src/server/prod-server.js");
     expect(COMPRESS_THRESHOLD).toBeGreaterThanOrEqual(256);
     expect(COMPRESS_THRESHOLD).toBeLessThanOrEqual(4096);
   });
 
   it("sendCompressed compresses text/html with gzip", async () => {
-    const { sendCompressed } = await import(
-      "../packages/vinext/src/server/prod-server.js"
-    );
+    const { sendCompressed } = await import("../packages/vinext/src/server/prod-server.js");
     const body = "<html>" + "x".repeat(2000) + "</html>";
     const req = { headers: { "accept-encoding": "gzip" } };
 
@@ -2653,9 +2644,7 @@ describe("production server compression", () => {
   });
 
   it("sendCompressed does not compress when disabled", async () => {
-    const { sendCompressed } = await import(
-      "../packages/vinext/src/server/prod-server.js"
-    );
+    const { sendCompressed } = await import("../packages/vinext/src/server/prod-server.js");
 
     const body = "<html>" + "x".repeat(2000) + "</html>";
     const req = { headers: { "accept-encoding": "gzip" } };
@@ -2681,9 +2670,7 @@ describe("production server compression", () => {
   });
 
   it("sendCompressed does not compress small bodies", async () => {
-    const { sendCompressed } = await import(
-      "../packages/vinext/src/server/prod-server.js"
-    );
+    const { sendCompressed } = await import("../packages/vinext/src/server/prod-server.js");
 
     const body = "<html>small</html>";
     const req = { headers: { "accept-encoding": "gzip" } };
@@ -2704,9 +2691,7 @@ describe("production server compression", () => {
   });
 
   it("sendCompressed does not compress non-compressible types", async () => {
-    const { sendCompressed } = await import(
-      "../packages/vinext/src/server/prod-server.js"
-    );
+    const { sendCompressed } = await import("../packages/vinext/src/server/prod-server.js");
 
     const body = Buffer.alloc(2000, 0xff); // binary content
     const req = { headers: { "accept-encoding": "gzip" } };
@@ -2726,11 +2711,94 @@ describe("production server compression", () => {
   });
 });
 
+describe("Set-Cookie header preservation in prod-server", () => {
+  it("mergeResponseHeaders preserves multiple Set-Cookie from response", async () => {
+    const { mergeResponseHeaders } = await import("../packages/vinext/src/server/prod-server.js");
+
+    const middlewareHeaders: Record<string, string | string[]> = {};
+    const response = new Response("ok", {
+      headers: [
+        ["set-cookie", "a=1; Path=/"],
+        ["set-cookie", "b=2; Path=/"],
+        ["content-type", "text/html"],
+      ],
+    });
+
+    const merged = mergeResponseHeaders(middlewareHeaders, response);
+    expect(merged["set-cookie"]).toEqual(["a=1; Path=/", "b=2; Path=/"]);
+    expect(merged["content-type"]).toBe("text/html");
+  });
+
+  it("mergeResponseHeaders merges middleware and response Set-Cookie", async () => {
+    const { mergeResponseHeaders } = await import("../packages/vinext/src/server/prod-server.js");
+
+    const middlewareHeaders: Record<string, string | string[]> = {
+      "set-cookie": ["mw=1; Path=/"],
+    };
+    const response = new Response("ok", {
+      headers: [["set-cookie", "resp=2; Path=/"]],
+    });
+
+    const merged = mergeResponseHeaders(middlewareHeaders, response);
+    expect(merged["set-cookie"]).toEqual(["mw=1; Path=/", "resp=2; Path=/"]);
+  });
+
+  it("mergeResponseHeaders handles middleware cookie as plain string", async () => {
+    const { mergeResponseHeaders } = await import("../packages/vinext/src/server/prod-server.js");
+
+    const middlewareHeaders: Record<string, string | string[]> = {
+      "set-cookie": "mw=1; Path=/",
+    };
+    const response = new Response("ok", {
+      headers: [["set-cookie", "resp=2; Path=/"]],
+    });
+
+    const merged = mergeResponseHeaders(middlewareHeaders, response);
+    expect(merged["set-cookie"]).toEqual(["mw=1; Path=/", "resp=2; Path=/"]);
+  });
+
+  it("mergeResponseHeaders does not duplicate non-Set-Cookie headers", async () => {
+    const { mergeResponseHeaders } = await import("../packages/vinext/src/server/prod-server.js");
+
+    const middlewareHeaders: Record<string, string | string[]> = {
+      "x-custom": "from-middleware",
+    };
+    const response = new Response("ok", {
+      headers: [
+        ["x-custom", "from-response"],
+        ["content-type", "text/html"],
+      ],
+    });
+
+    const merged = mergeResponseHeaders(middlewareHeaders, response);
+    // Response headers should override middleware headers for non-Set-Cookie
+    expect(merged["x-custom"]).toBe("from-response");
+  });
+
+  it("sendCompressed passes array-valued Set-Cookie to writeHead", async () => {
+    const { sendCompressed } = await import("../packages/vinext/src/server/prod-server.js");
+
+    let writtenHeaders: Record<string, string | string[]> = {};
+    const req = { headers: {} };
+    const res = {
+      writeHead: (_status: number, headers: Record<string, string | string[]>) => {
+        writtenHeaders = headers;
+      },
+      end: () => {},
+    };
+
+    const extraHeaders: Record<string, string | string[]> = {
+      "set-cookie": ["a=1; Path=/", "b=2; Path=/"],
+    };
+
+    sendCompressed(req as any, res as any, "small body", "text/html", 200, extraHeaders, false);
+    expect(writtenHeaders["set-cookie"]).toEqual(["a=1; Path=/", "b=2; Path=/"]);
+  });
+});
+
 describe("host header poisoning prevention", () => {
   it("resolveHost ignores X-Forwarded-Host by default", async () => {
-    const { resolveHost } = await import(
-      "../packages/vinext/src/server/prod-server.js"
-    );
+    const { resolveHost } = await import("../packages/vinext/src/server/prod-server.js");
     const req = {
       headers: {
         "x-forwarded-host": "evil.com",
@@ -2741,25 +2809,20 @@ describe("host header poisoning prevention", () => {
   });
 
   it("resolveHost uses Host header when X-Forwarded-Host is absent", async () => {
-    const { resolveHost } = await import(
-      "../packages/vinext/src/server/prod-server.js"
-    );
+    const { resolveHost } = await import("../packages/vinext/src/server/prod-server.js");
     const req = { headers: { host: "myapp.com:3000" } };
     expect(resolveHost(req as any, "localhost")).toBe("myapp.com:3000");
   });
 
   it("resolveHost returns fallback when no host headers are present", async () => {
-    const { resolveHost } = await import(
-      "../packages/vinext/src/server/prod-server.js"
-    );
+    const { resolveHost } = await import("../packages/vinext/src/server/prod-server.js");
     const req = { headers: {} };
     expect(resolveHost(req as any, "fallback.local")).toBe("fallback.local");
   });
 
   it("resolveHost trusts X-Forwarded-Host when it is in the trusted hosts set", async () => {
-    const { resolveHost, trustedHosts } = await import(
-      "../packages/vinext/src/server/prod-server.js"
-    );
+    const { resolveHost, trustedHosts } =
+      await import("../packages/vinext/src/server/prod-server.js");
     // Temporarily add a host to the trusted set
     trustedHosts.add("cdn.example.com");
     try {
@@ -2776,9 +2839,8 @@ describe("host header poisoning prevention", () => {
   });
 
   it("resolveHost still rejects untrusted X-Forwarded-Host when trusted set is non-empty", async () => {
-    const { resolveHost, trustedHosts } = await import(
-      "../packages/vinext/src/server/prod-server.js"
-    );
+    const { resolveHost, trustedHosts } =
+      await import("../packages/vinext/src/server/prod-server.js");
     trustedHosts.add("trusted.example.com");
     try {
       const req = {
@@ -2794,9 +2856,8 @@ describe("host header poisoning prevention", () => {
   });
 
   it("resolveHost handles case-insensitive host matching", async () => {
-    const { resolveHost, trustedHosts } = await import(
-      "../packages/vinext/src/server/prod-server.js"
-    );
+    const { resolveHost, trustedHosts } =
+      await import("../packages/vinext/src/server/prod-server.js");
     trustedHosts.add("cdn.example.com");
     try {
       const req = {
@@ -2813,9 +2874,8 @@ describe("host header poisoning prevention", () => {
   });
 
   it("resolveHost extracts first value from comma-separated X-Forwarded-Host", async () => {
-    const { resolveHost, trustedHosts } = await import(
-      "../packages/vinext/src/server/prod-server.js"
-    );
+    const { resolveHost, trustedHosts } =
+      await import("../packages/vinext/src/server/prod-server.js");
     trustedHosts.add("cdn.example.com");
     try {
       const req = {
@@ -2900,7 +2960,8 @@ describe("malformed percent-encoded URLs return 400 instead of crashing", () => 
   let malformedBaseUrl: string;
 
   beforeAll(async () => {
-    ({ server: malformedServer, baseUrl: malformedBaseUrl } = await startFixtureServer(FIXTURE_DIR));
+    ({ server: malformedServer, baseUrl: malformedBaseUrl } =
+      await startFixtureServer(FIXTURE_DIR));
   }, 30000);
 
   afterAll(async () => {
@@ -3068,11 +3129,10 @@ describe("multi-byte character SSR", () => {
   afterAll(async () => {
     try {
       (mbServer?.httpServer as any)?.closeAllConnections?.();
-      await Promise.race([
-        mbServer?.close(),
-        new Promise((resolve) => setTimeout(resolve, 5000)),
-      ]);
-    } catch { /* ignore */ }
+      await Promise.race([mbServer?.close(), new Promise((resolve) => setTimeout(resolve, 5000))]);
+    } catch {
+      /* ignore */
+    }
     const fsp = await import("node:fs/promises");
     await fsp.rm(mbTmpDir, { recursive: true, force: true }).catch(() => {});
   }, 15000);
@@ -3198,7 +3258,9 @@ export default function Page({ locale }) {
         localeRedirectServer?.close(),
         new Promise((resolve) => setTimeout(resolve, 5000)),
       ]);
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
     const fsp = await import("node:fs/promises");
     await fsp.rm(localeRedirectTmpDir, { recursive: true, force: true }).catch(() => {});
   }, 15000);
@@ -3243,7 +3305,7 @@ describe("applyNavigationLocale", () => {
     applyNavigationLocale = mod.applyNavigationLocale;
   });
 
-   beforeEach(() => {
+  beforeEach(() => {
     // Set up window globals that applyNavigationLocale reads
     (globalThis as any).window = globalThis;
     (globalThis as any).__VINEXT_DEFAULT_LOCALE__ = "en";
@@ -3326,7 +3388,9 @@ describe("parseCookieLocale", () => {
   });
 
   it("returns locale when NEXT_LOCALE is among multiple cookies", () => {
-    expect(parseCookieLocale({ headers: { cookie: "theme=dark; NEXT_LOCALE=de; session=abc" } }, config)).toBe("de");
+    expect(
+      parseCookieLocale({ headers: { cookie: "theme=dark; NEXT_LOCALE=de; session=abc" } }, config),
+    ).toBe("de");
   });
 
   it("returns null for invalid locale in cookie", () => {
@@ -3406,7 +3470,9 @@ describe("NEXT_LOCALE cookie redirect behavior", () => {
         cookieServer?.close(),
         new Promise((resolve) => setTimeout(resolve, 5000)),
       ]);
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
     const fsp = await import("node:fs/promises");
     await fsp.rm(cookieTmpDir, { recursive: true, force: true }).catch(() => {});
   }, 15000);
@@ -3590,7 +3656,9 @@ export function middleware(request) {
         chainServer?.close(),
         new Promise((resolve) => setTimeout(resolve, 5000)),
       ]);
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
     const fsp = await import("node:fs/promises");
     await fsp.rm(chainTmpDir, { recursive: true, force: true }).catch(() => {});
   }, 15000);
@@ -3694,7 +3762,9 @@ export function middleware(request) {
         statusServer?.close(),
         new Promise((resolve) => setTimeout(resolve, 5000)),
       ]);
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
     const fsp = await import("node:fs/promises");
     await fsp.rm(statusTmpDir, { recursive: true, force: true }).catch(() => {});
   }, 15000);
@@ -3734,10 +3804,7 @@ describe("Pages Router edge cases (batch 2)", () => {
     const rootNodeModules = path.resolve(import.meta.dirname, "../node_modules");
     await fsp.symlink(rootNodeModules, path.join(edgeTmpDir, "node_modules"), "junction");
 
-    await fsp.writeFile(
-      path.join(edgeTmpDir, "next.config.mjs"),
-      `export default {};`,
-    );
+    await fsp.writeFile(path.join(edgeTmpDir, "next.config.mjs"), `export default {};`);
 
     await fsp.mkdir(path.join(edgeTmpDir, "pages"), { recursive: true });
     await fsp.mkdir(path.join(edgeTmpDir, "pages", "api"), { recursive: true });
@@ -3863,7 +3930,9 @@ export default function NestedProps({ user }) {
         edgeServer?.close(),
         new Promise((resolve) => setTimeout(resolve, 5000)),
       ]);
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
     const fsp = await import("node:fs/promises");
     await fsp.rm(edgeTmpDir, { recursive: true, force: true }).catch(() => {});
   }, 15000);
@@ -4049,10 +4118,7 @@ export default function Home({ publicVar, serverVar, authUrl }) {
 
     try {
       (envServer?.httpServer as any)?.closeAllConnections?.();
-      await Promise.race([
-        envServer?.close(),
-        new Promise((r) => setTimeout(r, 3000)),
-      ]);
+      await Promise.race([envServer?.close(), new Promise((r) => setTimeout(r, 3000))]);
     } catch {}
 
     if (tmpDir) {
